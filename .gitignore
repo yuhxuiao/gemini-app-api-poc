@@ -1,0 +1,36 @@
+# Runtime state, account locks, session caches & local cookies/profiles
+runtime/
+*.pid
+*.log
+*.lock
+
+# Local absolute-path MCP config (use gemini_local_mcp_config.example.json as template)
+gemini_local_mcp_config.json
+
+# Compiled macOS native binaries & app bundles (built locally via ./cc-demo.sh workflow)
+bin/
+一键启动 Claude Code.app/
+
+# Python caches & environment files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.local
+
+# macOS metadata
+.DS_Store
+
+# Generated NIAH benchmark corpus & answer keys (~12MB; regenerate via niah_bench/generate_niah_suite.py)
+niah_bench/single_turn/
+niah_bench/multi_turn/
+niah_bench/chunks/
+niah_bench/answer_key.json
+
+# Ad-hoc local demo/test HTML artifacts
+bicycle-riding-pelican.html
+pelican_bicycle.html
+pelican_bicycle_2d.html
+qin-shihuang-polaris.html
+qin-shihuang-polaris-scroll.html

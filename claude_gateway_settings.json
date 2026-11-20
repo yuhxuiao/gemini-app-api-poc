@@ -1,0 +1,26 @@
+{
+  "model": "gemini-app-carbon",
+  "alwaysThinkingEnabled": true,
+  "showThinkingSummaries": true,
+  "effortLevel": "high",
+  "modelPicker": {
+    "replaceBuiltInOptions": true,
+    "options": [
+      {
+        "model": "gemini-app-carbon",
+        "label": "Gemini Carbon (4 Carbon 深度思考 High · 推荐默认 · 满血旗舰)",
+        "description": "满血 4 Carbon Deep Think High · 防超时降智 · 自动无痕清理侧边栏会话"
+      },
+      {
+        "model": "gemini-app-thinking",
+        "label": "Gemini Thinking (4 Hydrogen High · 快速显式思考)",
+        "description": "4 Hydrogen High · 10s 级快速显式思考与工具调用 · 适合日常中轻量改动"
+      },
+      {
+        "model": "gemini-app-fast",
+        "label": "Gemini Fast (4 Hydrogen Low · 极速响应)",
+        "description": "低延迟检索、旁路审查与子代理专用"
+      }
+    ]
+  }
+}

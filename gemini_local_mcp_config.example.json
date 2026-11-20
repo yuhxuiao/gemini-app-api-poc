@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "dsh-bridge": {
+      "command": "/path/to/gemini-app-api-poc/bin/dsh-mcp-stdio",
+      "args": []
+    },
+    "dsh-local-sysinfo": {
+      "command": "/usr/bin/python3",
+      "args": [
+        "-u",
+        "/path/to/gemini-app-api-poc/dsh_local_tools_mcp.py"
+      ]
+    }
+  }
+}

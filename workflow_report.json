@@ -1,0 +1,100 @@
+{
+  "project": "gemini-app-api-poc",
+  "target_version": "4.6.0-clean-carbon",
+  "started_at": "2026-11-17T20:58:36+0800",
+  "stages": [
+    {
+      "stage": "1. preflight_env",
+      "status": "PASS",
+      "elapsed_ms": 7,
+      "details": {
+        "files_audited_zero_acp": 7
+      }
+    },
+    {
+      "stage": "2. build_native",
+      "status": "PASS",
+      "elapsed_ms": 22,
+      "details": {
+        "version": "4.6.0-clean-carbon",
+        "dsh-mcp-stdio_sha256": "422b79277819c421da54b72f1c7a5125516023c0390882551f0c591962ed1a88",
+        "dsh-webkit-bridge_sha256": "d5c202518850dee65aac7b1642b3e3db9b263cfc47f0f771d46f1b59f4f5c4d8",
+        "webkit_binary_bytes": 354736,
+        "mcp_binary_bytes": 33600,
+        "macho_arch": "Mach-O 64-bit executable arm64",
+        "codesign_verified": true,
+        "rebuilt_targets": []
+      }
+    },
+    {
+      "stage": "3. unit_fsm_and_mcp",
+      "status": "PASS",
+      "elapsed_ms": 98,
+      "details": {
+        "session_key_stability": "PASS (explicit session-id never fractures)",
+        "fsm_1byte_and_example_guard": "PASS",
+        "fence_immunity": "PASS",
+        "raw_120kb_and_permissive_tags": "PASS",
+        "three_layer_json_recovery": "PASS (KEY/VAL quotes + anchor extract)",
+        "v8_poison_pill_truncation_seal": "PASS",
+        "three_path_thinking_and_canvas": "PASS",
+        "nov2026_carbon_hydrogen_routing": "PASS (Carbon mode=8 -> 4 Hydrogen High mode=1,w=2, 18-elem header)",
+        "embedded_stdio_mcp": "PASS"
+      }
+    },
+    {
+      "stage": "4. protocol_e2e",
+      "status": "PASS",
+      "elapsed_ms": 3755,
+      "details": {
+        "zero_quota_fast_paths": "PASS (0 upstream calls)",
+        "pure_layer_b_short_circuit": "PASS",
+        "mixed_layer_ab_stitching": "PASS",
+        "lossless_48k_pagination": "PASS",
+        "tombstone_watermark_rollover": "PASS (non-thrashing verified)",
+        "account_alignment_guard": "PASS (HTTP 403 pre-flight)",
+        "direct_delta_early_stop": "PASS",
+        "realtime_80kb_write_streaming": "PASS (43 live JSON delta chunks, >80KB intact)",
+        "malformed_envelope_self_heal": "PASS (zero leaked error text, recovered tool_use)",
+        "v44_api_compliance": "PASS (400 validation, stop_sequences, thinking.disabled, tool_choice, OpenAI Chat+Responses SSE, cancel propagation)"
+      }
+    },
+    {
+      "stage": "5. torture_soak_matrix",
+      "status": "PASS",
+      "elapsed_ms": 7598,
+      "details": {
+        "cold_start_warmup_auto_retry": "PASS (recovered after 2 BRIDGE_WARMING_UP polls)",
+        "canned_http200_error_self_heal": "PASS (intercepted canned error & replayed cold cleanly)",
+        "premature_socket_eof_guard": "PASS ([BRIDGE_PREMATURE_EOF] caught, zero silent truncation)",
+        "carbon_high_preserved_on_timeout": "PASS (Carbon timeout retries at full High w=2 without degrading to Medium)",
+        "pre_delta_flash_lite_to_hydrogen_high": "PASS (aborted Flash-Lite on Frame 0 & rerouted same turn to 4 Hydrogen High)",
+        "http_429_1095_stepdown_recovery": "PASS (Carbon 429 [1095] -> automatic 4 Hydrogen High step-down)",
+        "first_token_watchdog_recovery": "PASS (BOQ heartbeat stall FIRST_TOKEN_TIMEOUT retried cleanly)",
+        "bard_1097_checkpoint_rewind": "PASS (rewound to prior committed r_ckpt_1 without cold reset)",
+        "sideband_isolation_and_auto_delete": "PASS (<block> classifier isolated & auto-deleted via GzXR5e; main session sticky_delta intact)"
+      }
+    },
+    {
+      "stage": "6. live_smoke_gate",
+      "status": "PASS",
+      "elapsed_ms": 1568,
+      "details": {
+        "mode": "socketpair+fifo_verified",
+        "version": "4.6.0-clean-carbon",
+        "acp_spawned": false,
+        "readyz_endpoint": "PASS",
+        "webkit_binary_exists": true,
+        "embedded_local_mcp_servers": 2,
+        "plane2_fifo_bus": "PASS",
+        "models_registered": [
+          "gemini-app-carbon",
+          "gemini-app-thinking",
+          "gemini-app-fast"
+        ]
+      }
+    }
+  ],
+  "overall_status": "PASS",
+  "total_elapsed_ms": 13051
+}
