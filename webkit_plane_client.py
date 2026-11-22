@@ -32,23 +32,33 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from streaming_envelope_parser import StreamingEnvelopeParser
 
-EXPECTED_BRIDGE_VERSION = "4.6.0-clean-carbon"
+EXPECTED_BRIDGE_VERSION = "5.0.0-pure-api"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PROTO_PROFILE_PATH = os.environ.get(
     "DSH_WEB_PROTO_PROFILE",
     os.path.join(SCRIPT_DIR, "runtime", "web_proto_profile.json"),
 )
 
+# Strict 1:1 native model wire specs (zero cross-model auto-routing)
+NATIVE_MODEL_WIRE_SPECS: Dict[str, Dict[str, Any]] = {
+    "gemini-4-neon": {"mode": 3, "hex": "797f3d0293f288ad", "default_think_wire": 2},
+    "gemini-4-carbon": {"mode": 8, "hex": "95a4c0abcba24364", "default_think_wire": 2},
+    "gemini-4-hydrogen": {"mode": 1, "hex": "56fdd199312815e2", "default_think_wire": 2},
+    "gemini-4-argon": {"mode": 8, "hex": "1bc6b5d98741cd3d", "default_think_wire": 2},
+    "gemini-3.5-flash-lite": {"mode": 6, "hex": "1d44b34bcaa1c04d", "default_think_wire": 1},
+}
+
 MODE_HEX_DEFAULTS: Dict[int, str] = {
-    1: "56fdd199312815e2",  # Gemini 4 Hydrogen (universal, supports High ThinkWire=2!)
-    3: "e6fa609c3fa255c0",  # Gemini 3.1 Pro / Argon mid-tier
+    1: "56fdd199312815e2",  # Gemini 4 Hydrogen
+    3: "797f3d0293f288ad",  # Gemini 4 Neon
     6: "1d44b34bcaa1c04d",  # Gemini 3.5 Flash-Lite
-    8: "95a4c0abcba24364",  # Gemini 4 Carbon Flagship
+    8: "95a4c0abcba24364",  # Gemini 4 Carbon
 }
 
 KNOWN_HEX_MODES: Dict[str, int] = {
     "95a4c0abcba24364": 8,
     "1bc6b5d98741cd3d": 8,
+    "797f3d0293f288ad": 3,
     "e6fa609c3fa255c0": 3,
     "56fdd199312815e2": 1,
     "1d44b34bcaa1c04d": 6,
@@ -57,23 +67,29 @@ KNOWN_HEX_MODES: Dict[str, int] = {
 DEFAULT_CARBON_CAPACITY: List[int] = [4, 33, 22, 5, 6, 8, 16, 19, 20, 38]
 
 TIER_THINK_WIRE_MAP: Dict[str, int] = {
+    "disabled": 1,
+    "none": 1,
+    "minimal": 1,
     "low": 1,
     "medium": 4,
     "high": 2,
     "xhigh": 2,
+    "max": 2,
 }
 
 MODEL_DEFAULT_THINK_WIRE: Dict[str, int] = {
-    "gemini-app-carbon": 2,
-    "gemini-app-thinking": 2,
-    "gemini-app-fast": 1,
+    "gemini-4-neon": 2,
+    "gemini-4-carbon": 2,
+    "gemini-4-hydrogen": 2,
+    "gemini-4-argon": 2,
+    "gemini-3.5-flash-lite": 1,
 }
 
 DOWNGRADE_COOLDOWN_SEC = 1800.0
 FORBIDDEN_OVERRIDE_HEADERS = {"cookie", "authorization", "host", "content-length", "content-type", "origin", "referer"}
 PROTECTED_EXT_HEADERS = {"x-goog-ext-525001261-jspb", "x-goog-ext-525005358-jspb"}
 IMMERSIVE_CHIP_RE = re.compile(r"https?://googleusercontent\.com/immersive_entry_chip/(\d+)")
-ROUTED_MODEL_RE = re.compile(r"(?i)(Argon|Pro|Flash|Hydrogen|Carbon|Gemini)")
+ROUTED_MODEL_RE = re.compile(r"(?i)(Argon|Pro|Flash|Hydrogen|Carbon|Neon|Gemini)")
 CANNED_UPSTREAM_PREFIXES = (
     "i seem to be encountering an error",
     "i encountered an error doing what you asked",
@@ -102,7 +118,7 @@ CANNED_UPSTREAM_ERR_RE = re.compile(
     r"(?is)^\s*(?:"
     r"(?:i seem to be encountering an error|i encountered an error doing what you asked|"
     r"sorry,\s*something went wrong|i['’]?m having a hard time fulfilling your request|i am having a hard time fulfilling your request)\b"
-    r"|(?:我似乎遇到了一?[点]?错误|我似乎遇到错误|抱歉[,，]\s*出了[点點]问题|抱歉[,，]\s*发生了?错误|抱歉[,，]\s*發生錯誤|"
+    r"|(?:我似乎遇到了一?[点點]?[错錯][误誤]|我似乎遇到[错錯][误誤]|抱歉[,，]\s*出了[点點][问問][题題]|抱歉[,，]\s*[发發]生了?[错錯][误誤]|"
     r"出[错錯]了[,，]\s*[请請](?:稍[后後])?重[试試]|[请請]求出[错錯]|[发發]生了?[错錯][误誤])(?=$|[。！!?.，,\s：:])"
     r")"
 )
@@ -598,19 +614,23 @@ class WebProtoProfileCache:
             val = custom_thk[t_clean]
             if isinstance(val, int) and not isinstance(val, bool) and 0 <= val <= 8:
                 return val
-        if model_id == "gemini-app-fast" and not t_clean:
-            return 1
         if t_clean in TIER_THINK_WIRE_MAP:
             return TIER_THINK_WIRE_MAP[t_clean]
+        spec = NATIVE_MODEL_WIRE_SPECS.get((model_id or "").strip().lower())
+        if spec:
+            return int(spec["default_think_wire"])
         return MODEL_DEFAULT_THINK_WIRE.get(model_id, 2)
 
     def resolve_think_mode(self, model_id: str, tier: str = "") -> int:
         return self._resolve_think_mode_from_prof(self.load(), model_id, tier=tier)
 
     def _resolve_model_slots_from_prof(self, prof: Dict[str, Any], model_id: str, tier: str = "") -> Tuple[int, int]:
+        # Pure-API strict 1:1 model pinning: NEVER cross-route or substitute another model.
+        m_low = (model_id or "").strip().lower()
+        think_wire = self._resolve_think_mode_from_prof(prof, m_low, tier=tier)
         custom_map = prof.get("model_slots")
         if isinstance(custom_map, dict):
-            pair = custom_map.get(model_id)
+            pair = custom_map.get(m_low) or custom_map.get(model_id)
             if (
                 isinstance(pair, (list, tuple))
                 and len(pair) == 2
@@ -618,35 +638,28 @@ class WebProtoProfileCache:
                 and isinstance(pair[1], int) and not isinstance(pair[1], bool)
                 and 0 <= pair[0] <= 32
                 and 0 <= pair[1] <= 32
-                and not self.is_mode_downgraded(pair[0])
             ):
-                return (pair[0], pair[1])
+                return (pair[0], think_wire if tier else pair[1])
 
-        think_wire = self._resolve_think_mode_from_prof(prof, model_id, tier=tier)
-        if model_id == "gemini-app-fast":
-            return (1, think_wire)
-        if model_id == "gemini-app-thinking":
-            if self._account_supports_mode3_pro(prof):
-                return (3, think_wire)
-            return (1, 1) if self.is_mode_downgraded(1) else (1, think_wire)
-
-        if self._account_supports_argon_or_carbon(prof):
-            return (8, think_wire)
-        if self._account_supports_mode3_pro(prof):
-            return (3, think_wire)
-        return (1, 1) if self.is_mode_downgraded(1) else (1, think_wire)
+        spec = NATIVE_MODEL_WIRE_SPECS.get(m_low)
+        if spec is not None:
+            return (int(spec["mode"]), think_wire)
+        raise ValueError(f"Unsupported model_id for pure-API routing: {model_id!r}")
 
     def resolve_model_slots(self, model_id: str, tier: str = "") -> Tuple[int, int]:
         return self._resolve_model_slots_from_prof(self.load(), model_id, tier=tier)
 
-    def _resolve_model_hex_from_prof(self, prof: Dict[str, Any], slot_79: int) -> Optional[str]:
+    def _resolve_model_hex_from_prof(self, prof: Dict[str, Any], slot_79: int, model_id: str = "") -> Optional[str]:
+        spec = NATIVE_MODEL_WIRE_SPECS.get((model_id or "").strip().lower())
+        if spec and spec.get("hex"):
+            return str(spec["hex"])
         disc = self._discovered_hex_for_mode(prof, slot_79)
         if disc:
             return disc
         return MODE_HEX_DEFAULTS.get(slot_79)
 
-    def resolve_model_hex(self, slot_79: int) -> Optional[str]:
-        return self._resolve_model_hex_from_prof(self.load(), slot_79)
+    def resolve_model_hex(self, slot_79: int, model_id: str = "") -> Optional[str]:
+        return self._resolve_model_hex_from_prof(self.load(), slot_79, model_id=model_id)
 
     def resolve_extra_headers(
         self,
@@ -655,19 +668,47 @@ class WebProtoProfileCache:
         req_uuid: str = "",
         hl: str = "zh-CN",
         force_default_hex: bool = False,
+        prof_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
-        prof = self.load()
+        prof = prof_snapshot if prof_snapshot is not None else self.load()
         slot_79, slot_80 = self._resolve_model_slots_from_prof(prof, model_id, tier=tier)
-        model_hex = MODE_HEX_DEFAULTS.get(slot_79) if force_default_hex else self._resolve_model_hex_from_prof(prof, slot_79)
+        spec = NATIVE_MODEL_WIRE_SPECS.get((model_id or "").strip().lower())
+        if force_default_hex:
+            model_hex = (spec["hex"] if spec else MODE_HEX_DEFAULTS.get(slot_79))
+        else:
+            model_hex = self._resolve_model_hex_from_prof(prof, slot_79, model_id=model_id)
         capacity = self._extract_capacity(prof)
         bl = str(prof.get("bl") or "").strip()
         ruuid = req_uuid or str(uuid.uuid4()).upper()
 
-        ext_525_arr: List[Any] = [
-            1, None, None, None, model_hex, None, hl, None,
-            capacity, None, None, None, None, None, slot_79, slot_80,
-            ruuid, ([bl] if bl else None), None, [[], [int(time.time()), 0], "Asia/Shanghai"],
-        ]
+        # Template-First 28-element x-goog-ext-525001261-jspb (preserves live upstream trailing slots & timezone)
+        ext_525_arr: Optional[List[Any]] = None
+        base_h = prof.get("extra_headers")
+        if isinstance(base_h, dict):
+            raw_525 = base_h.get("x-goog-ext-525001261-jspb")
+            if isinstance(raw_525, str) and raw_525.startswith("["):
+                try:
+                    parsed_525 = json.loads(raw_525)
+                    if isinstance(parsed_525, list) and len(parsed_525) >= 18:
+                        ext_525_arr = list(parsed_525)
+                except Exception:
+                    ext_525_arr = None
+        if ext_525_arr is None:
+            ext_525_arr = [None] * 28
+            ext_525_arr[0] = 1
+            ext_525_arr[27] = "Asia/Shanghai"
+        elif len(ext_525_arr) < 28:
+            ext_525_arr.extend([None] * (28 - len(ext_525_arr)))
+            if not ext_525_arr[27]:
+                ext_525_arr[27] = "Asia/Shanghai"
+        ext_525_arr[0] = 1
+        ext_525_arr[4] = model_hex
+        ext_525_arr[6] = hl
+        ext_525_arr[8] = capacity
+        ext_525_arr[14] = slot_79
+        ext_525_arr[15] = slot_80
+        ext_525_arr[16] = ruuid
+        ext_525_arr[17] = [bl] if bl else ext_525_arr[17]
 
         merged: Dict[str, str] = {
             "x-goog-ext-525001261-jspb": json.dumps(ext_525_arr, separators=(",", ":")),
@@ -676,7 +717,6 @@ class WebProtoProfileCache:
             "x-goog-ext-73010990-jspb": "[0,0,0]",
         }
 
-        base_h = prof.get("extra_headers")
         if isinstance(base_h, dict):
             for k, v in base_h.items():
                 kl = str(k).strip().lower()
@@ -699,8 +739,8 @@ class WebProtoProfileCache:
                     merged[kl] = str(v)
         return merged
 
-    def resolve_fallback_bl(self) -> str:
-        prof = self.load()
+    def resolve_fallback_bl(self, prof_snapshot: Optional[Dict[str, Any]] = None) -> str:
+        prof = prof_snapshot if prof_snapshot is not None else self.load()
         bl = prof.get("bl")
         return str(bl).strip() if isinstance(bl, str) else ""
 
@@ -712,14 +752,16 @@ def build_stream_generate_freq(
     delta_prompt: str,
     cursor: Optional[Tuple[str, str, str]] = None,
     turn_index: int = 0,
-    model_id: str = "gemini-app-carbon",
+    model_id: str = "gemini-4-neon",
     tier: str = "",
     hl: str = "zh-CN",
     proto_cache: Optional[WebProtoProfileCache] = None,
+    prof_snapshot: Optional[Dict[str, Any]] = None,
 ) -> str:
     cid, rid, rcid = cursor if (cursor and len(cursor) == 3) else ("", "", "")
     cache = proto_cache or PROTO_PROFILE_CACHE
-    slot_79, slot_80 = cache.resolve_model_slots(model_id, tier=tier)
+    prof = prof_snapshot if prof_snapshot is not None else cache.load()
+    slot_79, slot_80 = cache._resolve_model_slots_from_prof(prof, model_id, tier=tier)
     safe_turn_idx = max(0, int(turn_index))
 
     inner: List[Any] = [None] * 97
@@ -760,6 +802,19 @@ def compute_safe_snapshot_delta(prev: str, curr: str) -> Tuple[str, str]:
     return (curr[len(prev) :], curr)
 
 
+def _collect_thought_strings(node: Any, out: List[str], depth: int = 0) -> None:
+    if depth > 6 or node is None:
+        return
+    if isinstance(node, str):
+        s = node.strip()
+        if len(s) >= 2 and not s.startswith("http") and not re.fullmatch(r"[0-9a-fA-F_-]{8,}", s):
+            out.append(node)
+        return
+    if isinstance(node, list):
+        for it in node:
+            _collect_thought_strings(it, out, depth + 1)
+
+
 def extract_thought_from_cand(cand: List[Any]) -> str:
     if len(cand) <= 37 or not isinstance(cand[37], list) or not cand[37]:
         return ""
@@ -778,7 +833,9 @@ def extract_thought_from_cand(cand: List[Any]) -> str:
                     steps.append(step[0])
         if steps:
             return "\n\n".join(steps)
-    return ""
+    fallback_parts: List[str] = []
+    _collect_thought_strings(c37, fallback_parts, 0)
+    return "\n\n".join(fallback_parts) if fallback_parts else ""
 
 
 class WrbStreamFrameDecoder:
@@ -1427,13 +1484,12 @@ class WebKitPlaneClient:
     def abort_stream(self, target_req_id: str) -> None:
         self._unix_rpc_oneshot({"op": "abort", "targetReqId": target_req_id}, timeout_sec=0.8)
 
-    def background_drain_stream(self, target_req_id: str, max_drain_ms: int = 6000) -> None:
+    def background_drain_stream(self, target_req_id: str, max_drain_ms: int = 6000) -> bool:
         res = self._unix_rpc_oneshot(
             {"op": "background_drain", "targetReqId": target_req_id, "maxDrainMs": int(max_drain_ms)},
-            timeout_sec=0.8,
+            timeout_sec=2.0,
         )
-        if not res or not res.get("ok"):
-            self.abort_stream(target_req_id)
+        return bool(res and res.get("ok"))
 
     def delete_conversations(self, cids: List[str], timeout_sec: float = 12.0) -> dict:
         clean_cids: List[str] = []
@@ -1448,6 +1504,8 @@ class WebKitPlaneClient:
         res = self._unix_rpc_oneshot({"op": "delete_conversations", "cids": clean_cids}, timeout_sec=timeout_sec)
         if isinstance(res, dict) and isinstance(res.get("deleted"), list):
             with self._delete_lock:
+                if len(self._deleted_cids_seen) > 4096:
+                    self._deleted_cids_seen.clear()
                 for d_cid in res["deleted"]:
                     self._deleted_cids_seen.add(str(d_cid))
                 self.deleted_conversations_count += len(res["deleted"])
@@ -1475,12 +1533,10 @@ class WebKitPlaneClient:
 
         def _drain_deletes() -> None:
             try:
-                # Brief coalesce delay so background_drain cursor commit finishes before delete if needed
                 time.sleep(0.35)
                 while True:
                     with self._delete_lock:
                         if not self._pending_delete_cids:
-                            self._delete_worker_running = False
                             return
                         batch = self._pending_delete_cids[:16]
                         del self._pending_delete_cids[:16]
@@ -1489,9 +1545,14 @@ class WebKitPlaneClient:
                     except Exception:
                         pass
             finally:
+                restart_needed = False
                 with self._delete_lock:
-                    if not self._pending_delete_cids:
-                        self._delete_worker_running = False
+                    self._delete_worker_running = False
+                    if self._pending_delete_cids:
+                        self._delete_worker_running = True
+                        restart_needed = True
+                if restart_needed:
+                    threading.Thread(target=_drain_deletes, daemon=True).start()
 
         threading.Thread(target=_drain_deletes, daemon=True).start()
 
@@ -1529,9 +1590,9 @@ class WebKitPlaneClient:
         turn_index: int,
         model_id: str,
         tier: str = "",
-        priority: int = 2,
+        priority: int = 1,
         on_delta: Optional[Callable[[dict], None]] = None,
-        timeout_sec: float = 240.0,
+        timeout_sec: float = 600.0,
         stream_raw_tool_names: Optional[Set[str]] = None,
         cwd: str = "",
         cancel_event: Optional[threading.Event] = None,
@@ -1550,12 +1611,14 @@ class WebKitPlaneClient:
             raise RuntimeError("Plane 1 concurrency queue timeout")
 
         hit_429 = False
-        retry_delays = [0.25, 0.6, 1.2]
-        rate_limit_delays = [1.6, 3.4, 6.5]
+        # Pure-API policy: at most 1 retry on the EXACT SAME model & SAME thinking level for 429/hijack;
+        # brief warmup retries allowed for bridge hydration.
+        warmup_retry_delays = [0.25, 0.6, 1.2]
+        same_model_max_retries = 1
         attempt = 0
-        downgrade_reroutes = 0
+        same_model_retries = 0
         attempt_tier = tier
-        force_default_hex = False
+        input_cid = cursor[0] if (cursor and len(cursor) == 3) else ""
 
         def _wait_backoff_or_abort(delay_sec: float) -> None:
             rem = deadline - time.monotonic()
@@ -1580,7 +1643,8 @@ class WebKitPlaneClient:
 
                 req_id = "wreq_" + uuid.uuid4().hex[:12]
                 req_uuid = str(uuid.uuid4()).upper()
-                slot_79_used, slot_80_used = self.proto_cache.resolve_model_slots(model_id, tier=attempt_tier)
+                prof_snap = self.proto_cache.load()
+                slot_79_used, slot_80_used = self.proto_cache._resolve_model_slots_from_prof(prof_snap, model_id, tier=attempt_tier)
                 freq_str = build_stream_generate_freq(
                     delta_prompt=delta_prompt,
                     cursor=cursor,
@@ -1589,23 +1653,21 @@ class WebKitPlaneClient:
                     tier=attempt_tier,
                     hl=hl,
                     proto_cache=self.proto_cache,
+                    prof_snapshot=prof_snap,
                 )
                 extra_headers = self.proto_cache.resolve_extra_headers(
                     model_id,
                     tier=attempt_tier,
                     req_uuid=req_uuid,
                     hl=hl,
-                    force_default_hex=force_default_hex,
+                    prof_snapshot=prof_snap,
                 )
-                fallback_bl = self.proto_cache.resolve_fallback_bl()
+                fallback_bl = self.proto_cache.resolve_fallback_bl(prof_snapshot=prof_snap)
 
-                should_guard_downgrade = (
+                should_guard_hijack = (
                     self.strict_downgrade_reroute
-                    and downgrade_reroutes < 2
-                    and (
-                        (model_id in ("gemini-app-carbon", "gemini-app-thinking") and slot_79_used in (8, 3))
-                        or (slot_79_used in (8, 3, 1) and slot_80_used == 2)
-                    )
+                    and slot_79_used != 6
+                    and (model_id or "").strip().lower() != "gemini-3.5-flash-lite"
                 )
 
                 early_stopped = False
@@ -1624,9 +1686,10 @@ class WebKitPlaneClient:
                 routed_model_seen = ""
                 streamed_any_tool = False
 
-                model_confirmed = not should_guard_downgrade
+                model_confirmed = not should_guard_hijack
                 held_guard_events: List[Tuple[str, Any]] = []
                 held_guard_chars = 0
+                first_guard_at: Optional[float] = None
                 attempt_t0 = time.monotonic()
 
                 wrb_decoder = WrbStreamFrameDecoder()
@@ -1636,6 +1699,11 @@ class WebKitPlaneClient:
                     stream_raw_tool_names=stream_raw_tool_names if on_delta is not None else None,
                     cwd=cwd,
                 )
+
+                def _cleanup_orphan() -> None:
+                    oc = wrb_decoder.conversation_id
+                    if oc and oc != input_cid:
+                        self.delete_conversations_async([oc])
 
                 def flush_held_suspect() -> None:
                     nonlocal first_delta_at, delta_chunks, emitted_visible_delta
@@ -1660,6 +1728,7 @@ class WebKitPlaneClient:
                             delta_chunks += 1
                             think_parts.append(val)
                             if on_delta is not None:
+                                emitted_visible_delta = True
                                 on_delta({"type": "thinking", "content": val})
                         elif kind == "text":
                             if not val:
@@ -1709,6 +1778,8 @@ class WebKitPlaneClient:
                             flush_held_suspect()
                             tool_calls.append(val)
                             first_tool_done_at = time.monotonic()
+                            post_tool_buf.clear()
+                            post_tool_hallucination = False
                         elif kind == "malformed_envelope":
                             malformed_envelopes.append(val)
 
@@ -1723,12 +1794,14 @@ class WebKitPlaneClient:
                             emit_events(pending)
 
                 def handle_parser_events(ev_list: List[Tuple[str, Any]]) -> None:
-                    nonlocal held_guard_chars
+                    nonlocal held_guard_chars, first_guard_at
                     if not ev_list:
                         return
                     if model_confirmed:
                         emit_events(ev_list)
                         return
+                    if first_guard_at is None:
+                        first_guard_at = time.monotonic()
                     for kind, val in ev_list:
                         held_guard_events.append((kind, val))
                         if isinstance(val, str):
@@ -1742,22 +1815,23 @@ class WebKitPlaneClient:
                             and env_parser.can_early_stop_after_tool_call()
                         )
                         or held_guard_chars >= 512
-                        or (time.monotonic() - attempt_t0) >= 1.5
+                        or (time.monotonic() - first_guard_at) >= 1.5
                     ):
                         flush_guard_buffer()
 
-                def check_downgrade_or_confirm(rm_val: str) -> bool:
-                    nonlocal routed_model_seen
+                hijack_detected_label: Optional[str] = None
+
+                def check_hijack_or_confirm(rm_val: str) -> bool:
+                    nonlocal routed_model_seen, hijack_detected_label
                     if not rm_val:
                         return False
                     routed_model_seen = rm_val
                     rm_low = rm_val.lower()
-                    if should_guard_downgrade and ("lite" in rm_low or "3.5 flash" in rm_low):
+                    if should_guard_hijack and ("lite" in rm_low or "3.5 flash" in rm_low):
                         held_guard_events.clear()
-                        self.proto_cache.mark_mode_downgraded(slot_79_used)
-                        if not emitted_visible_delta and not text_parts and not streamed_any_tool and downgrade_reroutes < 2:
-                            self.abort_stream(req_id)
-                            return True
+                        hijack_detected_label = rm_val
+                        self.abort_stream(req_id)
+                        return True
                     flush_guard_buffer()
                     return False
 
@@ -1766,14 +1840,16 @@ class WebKitPlaneClient:
                     if not (
                         self.early_stop_on_tool_call
                         and tool_calls
+                        and post_tool_hallucination
                         and env_parser.can_early_stop_after_tool_call()
                     ):
                         return False
-                    # Give natural `done` up to 0.35s (or 0.12s if post-tool prose started) to arrive directly,
-                    # then detach via `background_drain_stream` so client returns immediately with zero 3s stall
-                    # while WKWebView finishes committing `(cid, rid, rcid)` in the background!
-                    wait_grace = 0.12 if post_tool_hallucination else 0.35
-                    if first_tool_done_at is None or (time.monotonic() - first_tool_done_at) < wait_grace:
+                    cur_now = wrb_decoder.cursor()
+                    if len(cur_now) != 3 or not all(cur_now):
+                        return False
+                    # Only early-stop when post-tool hallucination is actually detected (0.12s);
+                    # clean tool calls wait for upstream `done` so server-side cursor commits with zero 1097 rewinds.
+                    if first_tool_done_at is None or (time.monotonic() - first_tool_done_at) < 0.12:
                         return False
                     flush_guard_buffer()
                     handle_parser_events(env_parser.finish())
@@ -1782,11 +1858,10 @@ class WebKitPlaneClient:
                     return True
 
                 retryable_err: Optional[str] = None
-                reroute_downgrade_now = False
                 done_seen = False
 
-                def handle_wrb_rpc_error_or_reroute(err_val: str) -> None:
-                    nonlocal hit_429, retryable_err, reroute_downgrade_now, done_seen, force_default_hex
+                def handle_wrb_rpc_error(err_val: str) -> None:
+                    nonlocal hit_429, retryable_err, done_seen
                     d_low = err_val.lower()
                     is_rl = (
                         "code=429" in d_low
@@ -1797,30 +1872,26 @@ class WebKitPlaneClient:
                         or "resource_exhausted" in d_low
                     )
                     self.abort_stream(req_id)
+                    _cleanup_orphan()
                     if is_rl:
                         hit_429 = True
-                        force_default_hex = True
                         can_retry_cleanly = (not text_parts and not streamed_any_tool and not emitted_visible_delta)
-                        if can_retry_cleanly and slot_79_used in (8, 3) and downgrade_reroutes < 2 and (deadline - time.monotonic()) > 5.0:
-                            self.proto_cache.mark_mode_downgraded(slot_79_used, cooldown_sec=300.0)
-                            reroute_downgrade_now = True
-                            return
-                        if can_retry_cleanly and attempt < len(rate_limit_delays) and (deadline - time.monotonic()) > 5.0:
+                        if can_retry_cleanly and same_model_retries < same_model_max_retries and (deadline - time.monotonic()) > 4.0:
                             retryable_err = "HTTP_429"
                             done_seen = True
                             return
+                        raise RuntimeError(f"[HTTP_429] Upstream rate limit/quota on model={model_id}: {err_val}")
                     raise RuntimeError(f"[WRB_RPC_ERROR] {err_val}")
 
                 try:
                     sock = self._open_stream_socket(min(rem, 15.0))
-                    low_m = (model_id or "").lower()
                     low_t = (attempt_tier or "").lower()
-                    if "carbon" in low_m or slot_79_used == 8:
-                        hdr_ms, first_wrb_ms, idle_ms = 120000, 300000, 360000
-                    elif low_m == "gemini-app-fast" or low_t == "low":
-                        hdr_ms, first_wrb_ms, idle_ms = 35000, 45000, 75000
+                    if slot_80_used == 2 or slot_79_used in (8, 3):
+                        hdr_ms, first_wrb_ms, idle_ms = 120000, 480000, 540000
+                    elif slot_79_used == 6 or low_t in ("low", "disabled", "minimal", "none"):
+                        hdr_ms, first_wrb_ms, idle_ms = 45000, 60000, 90000
                     else:
-                        hdr_ms, first_wrb_ms, idle_ms = 75000, 120000, 180000
+                        hdr_ms, first_wrb_ms, idle_ms = 90000, 180000, 240000
                     rem_ms = max(12000, int((rem - 1.0) * 1000))
                     req_obj: Dict[str, Any] = {
                         "op": "stream_generate",
@@ -1841,12 +1912,14 @@ class WebKitPlaneClient:
                     sock.settimeout(0.25)
 
                     sock_buf = bytearray()
-                    while not done_seen and not reroute_downgrade_now and not early_stopped:
+                    while not done_seen and hijack_detected_label is None and not early_stopped:
                         if cancel_event is not None and cancel_event.is_set():
                             self.abort_stream(req_id)
+                            _cleanup_orphan()
                             raise RuntimeError("[CLIENT_CANCELLED] Client disconnected")
                         if time.monotonic() >= deadline:
                             self.abort_stream(req_id)
+                            _cleanup_orphan()
                             raise RuntimeError(f"[STREAM_TIMEOUT] WebKit stream exceeded {timeout_sec:.1f}s deadline")
                         sock.settimeout(0.08 if first_tool_done_at is not None else 0.25)
                         try:
@@ -1875,31 +1948,26 @@ class WebKitPlaneClient:
                             ev = msg.get("event", "")
                             if ev == "meta":
                                 if msg.get("routed_model"):
-                                    if check_downgrade_or_confirm(str(msg["routed_model"])):
-                                        reroute_downgrade_now = True
+                                    if check_hijack_or_confirm(str(msg["routed_model"])):
                                         break
                             elif ev == "raw_chunk":
                                 wrb_deltas = wrb_decoder.feed_raw_chunk(str(msg.get("data", "")))
                                 if wrb_decoder.routed_model:
-                                    if check_downgrade_or_confirm(wrb_decoder.routed_model):
-                                        reroute_downgrade_now = True
+                                    if check_hijack_or_confirm(wrb_decoder.routed_model):
                                         break
                                 for d_kind, d_val in wrb_deltas:
                                     if d_kind == "thinking":
                                         handle_parser_events(env_parser.feed_thinking(d_val))
                                     elif d_kind == "error":
-                                        handle_wrb_rpc_error_or_reroute(d_val)
+                                        handle_wrb_rpc_error(d_val)
                                         break
                                     else:
                                         handle_parser_events(env_parser.feed_text(d_val))
-                                    if maybe_early_stop():
-                                        break
-                                if early_stopped or reroute_downgrade_now or done_seen:
+                                if early_stopped or hijack_detected_label is not None or done_seen:
                                     break
                             elif ev == "direct_delta":
                                 if msg.get("routed_model"):
-                                    if check_downgrade_or_confirm(str(msg["routed_model"])):
-                                        reroute_downgrade_now = True
+                                    if check_hijack_or_confirm(str(msg["routed_model"])):
                                         break
                                 d_kind = msg.get("kind", "text")
                                 d_val = str(msg.get("data", ""))
@@ -1913,8 +1981,6 @@ class WebKitPlaneClient:
                                     handle_parser_events(env_parser.feed_thinking(d_val))
                                 elif d_val:
                                     handle_parser_events(env_parser.feed_text(d_val))
-                                if maybe_early_stop():
-                                    break
                             elif ev == "error":
                                 code = str(msg.get("code", ""))
                                 err_msg = str(msg.get("message", "WebKit stream error"))
@@ -1922,20 +1988,19 @@ class WebKitPlaneClient:
                                     done_seen = True
                                     break
                                 if code == "CLIENT_ABORTED" and cancel_event is not None and cancel_event.is_set():
+                                    _cleanup_orphan()
                                     raise RuntimeError("[CLIENT_CANCELLED] Client disconnected")
                                 is_429 = ("429" in code or "RESOURCE_EXHAUSTED" in code.upper() or "[1095]" in err_msg or "1037" in err_msg)
                                 if is_429:
                                     hit_429 = True
-                                    force_default_hex = True
                                 can_retry_cleanly = (not text_parts and not streamed_any_tool and not emitted_visible_delta)
-                                if is_429 and can_retry_cleanly and slot_79_used in (8, 3) and downgrade_reroutes < 2 and (deadline - time.monotonic()) > 5.0:
-                                    self.proto_cache.mark_mode_downgraded(slot_79_used, cooldown_sec=300.0)
-                                    reroute_downgrade_now = True
+                                if code == "BRIDGE_WARMING_UP" and can_retry_cleanly and attempt < len(warmup_retry_delays) and (deadline - time.monotonic()) > 3.0:
+                                    retryable_err = code
+                                    done_seen = True
                                     break
                                 if (
                                     (
                                         code in (
-                                            "BRIDGE_WARMING_UP",
                                             "TRANSIENT_EMPTY_STREAM",
                                             "FETCH_ERR",
                                             "FETCH_TIMEOUT",
@@ -1945,29 +2010,35 @@ class WebKitPlaneClient:
                                             "NAVIGATION_FAILED",
                                             "JS_CALL_ERR",
                                         )
-                                        or (is_429 and (deadline - time.monotonic()) > 5.0)
+                                        or is_429
                                     )
                                     and can_retry_cleanly
-                                    and attempt < len(retry_delays)
+                                    and same_model_retries < same_model_max_retries
                                     and (deadline - time.monotonic()) > 3.0
                                 ):
-                                    retryable_err = code
+                                    retryable_err = "HTTP_429" if is_429 else code
                                     done_seen = True
                                     break
+                                _cleanup_orphan()
+                                if is_429:
+                                    raise RuntimeError(f"[HTTP_429] {err_msg}")
                                 raise RuntimeError(f"[{code}] {err_msg}")
                             elif ev == "done":
                                 for d_kind, d_val in wrb_decoder.flush():
                                     if d_kind == "thinking":
                                         handle_parser_events(env_parser.feed_thinking(d_val))
                                     elif d_kind == "error":
-                                        handle_wrb_rpc_error_or_reroute(d_val)
+                                        handle_wrb_rpc_error(d_val)
                                         break
                                     else:
                                         handle_parser_events(env_parser.feed_text(d_val))
-                                if reroute_downgrade_now:
+                                if hijack_detected_label is not None:
                                     break
                                 flush_guard_buffer()
                                 done_seen = True
+                                break
+                        if not done_seen and hijack_detected_label is None and not early_stopped:
+                            if maybe_early_stop():
                                 break
                 finally:
                     if sock is not None:
@@ -1976,43 +2047,47 @@ class WebKitPlaneClient:
                         except Exception:
                             pass
 
-                input_cid = cursor[0] if (cursor and len(cursor) == 3) else ""
-                orphan_cid = wrb_decoder.conversation_id if (wrb_decoder.conversation_id and wrb_decoder.conversation_id != input_cid) else ""
-
-                if reroute_downgrade_now:
-                    if orphan_cid:
-                        self.delete_conversations_async([orphan_cid])
-                    downgrade_reroutes += 1
-                    if not os.environ.get("DSH_QUIET"):
-                        sys.stderr.write(
-                            f"[webkit_plane] Same-turn downgrade/quota reroute #{downgrade_reroutes} "
-                            f"(from slot_79={slot_79_used} model={model_id} elapsed={time.monotonic() - attempt_t0:.1f}s)\n"
-                        )
-                        sys.stderr.flush()
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError(f"[STREAM_TIMEOUT] WebKit stream exceeded {timeout_sec:.1f}s deadline")
-                    continue
+                if hijack_detected_label is not None:
+                    _cleanup_orphan()
+                    if same_model_retries < same_model_max_retries and (deadline - time.monotonic()) > 4.0:
+                        same_model_retries += 1
+                        attempt += 1
+                        if not os.environ.get("DSH_QUIET"):
+                            sys.stderr.write(
+                                f"[webkit_plane] Same-model retry {same_model_retries}/{same_model_max_retries} "
+                                f"after upstream hijack to {hijack_detected_label!r} (model={model_id} tier={attempt_tier or 'default'})\n"
+                            )
+                            sys.stderr.flush()
+                        _wait_backoff_or_abort(0.8)
+                        continue
+                    raise RuntimeError(
+                        f"[UPSTREAM_MODEL_HIJACK] Requested model '{model_id}' (mode={slot_79_used}) was silently downgraded by upstream to '{hijack_detected_label}'"
+                    )
 
                 if retryable_err is not None:
-                    if orphan_cid:
-                        self.delete_conversations_async([orphan_cid])
+                    _cleanup_orphan()
+                    is_warmup = (retryable_err == "BRIDGE_WARMING_UP")
+                    is_rl_retry = ("429" in retryable_err or "RESOURCE_EXHAUSTED" in retryable_err.upper())
+                    if not is_warmup:
+                        same_model_retries += 1
                     if not os.environ.get("DSH_QUIET"):
                         sys.stderr.write(
-                            f"[webkit_plane] Pre-delta retry {attempt + 1}/{len(retry_delays)} "
+                            f"[webkit_plane] Pre-delta same-model retry (attempt={attempt + 1}) "
                             f"after {retryable_err} (model={model_id} tier={attempt_tier or 'default'} "
                             f"elapsed={time.monotonic() - attempt_t0:.1f}s)\n"
                         )
                         sys.stderr.flush()
-                    is_rl_retry = ("429" in retryable_err or "RESOURCE_EXHAUSTED" in retryable_err.upper())
-                    wait_delay = (rate_limit_delays[min(attempt, len(rate_limit_delays) - 1)] + random.uniform(0.0, 0.35)) if is_rl_retry else retry_delays[attempt]
+                    wait_delay = (1.6 + random.uniform(0.0, 0.35)) if is_rl_retry else warmup_retry_delays[min(attempt, len(warmup_retry_delays) - 1)]
                     _wait_backoff_or_abort(wait_delay)
                     attempt += 1
                     continue
 
                 if not done_seen and not (early_stopped and tool_calls):
-                    if not text_parts and not streamed_any_tool and not emitted_visible_delta and attempt < len(retry_delays):
-                        _wait_backoff_or_abort(retry_delays[attempt])
+                    _cleanup_orphan()
+                    if not text_parts and not streamed_any_tool and not emitted_visible_delta and same_model_retries < same_model_max_retries:
+                        same_model_retries += 1
                         attempt += 1
+                        _wait_backoff_or_abort(0.4)
                         continue
                     raise RuntimeError("[BRIDGE_PREMATURE_EOF] WebKit bridge socket closed before stream done event")
 
@@ -2023,22 +2098,23 @@ class WebKitPlaneClient:
                 if held_canned_suspect and not text_parts and not tool_calls and not streamed_any_tool:
                     cand_err_txt = "".join(held_canned_suspect).strip()
                     if CANNED_UPSTREAM_ERR_RE.search(cand_err_txt):
-                        if not any(cursor) and attempt < len(retry_delays):
-                            _wait_backoff_or_abort(retry_delays[attempt])
+                        _cleanup_orphan()
+                        if not any(cursor) and same_model_retries < same_model_max_retries:
+                            same_model_retries += 1
                             attempt += 1
+                            _wait_backoff_or_abort(0.4)
                             continue
                         raise RuntimeError(f"[UPSTREAM_CANNED_ERROR] {cand_err_txt[:160]}")
                 flush_held_suspect()
 
                 new_cursor = wrb_decoder.cursor()
                 if len(new_cursor) != 3 or not all(new_cursor):
+                    _cleanup_orphan()
                     new_cursor = cursor
 
                 now_m = time.monotonic()
                 ttft_ms = max(1, int(((first_delta_at or now_m) - t0) * 1000))
                 smode = "plane1_webkit_early_stop" if early_stopped else "plane1_webkit_native"
-                if downgrade_reroutes > 0:
-                    smode += f"+rerouted(m{slot_79_used}w{slot_80_used})"
                 if attempt > 0:
                     smode += f"+retried({attempt})"
                 return {
@@ -2047,6 +2123,8 @@ class WebKitPlaneClient:
                     "malformed_envelopes": malformed_envelopes,
                     "streamed_any_tool": streamed_any_tool,
                     "routed_model": routed_model_seen,
+                    "wire_slot_79": slot_79_used,
+                    "wire_slot_80": slot_80_used,
                     "text": "".join(text_parts),
                     "thinking": "".join(think_parts),
                     "cursor": new_cursor,

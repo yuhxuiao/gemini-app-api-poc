@@ -1282,7 +1282,7 @@ def build_dsh_tp_system_instructions(
     cwd: str = "",
     tool_choice: Optional[Any] = None,
 ) -> str:
-    """Builds the DSH-TP v1.1 client-framed tool-calling contract injected into the pure-Web prompt."""
+    """Builds the DSH-TP v1.2 ultra-compact client-framed tool-calling contract (-80% protocol tax)."""
     all_tools: List[dict] = []
     seen: Set[str] = set()
     for t in (tools_catalog or []):
@@ -1306,15 +1306,13 @@ def build_dsh_tp_system_instructions(
     has_edit = "Edit" in names_set
     has_bash = "Bash" in names_set
     has_read = "Read" in names_set
-    path_tools = [n for n in ("Read", "Write", "Edit") if n in names_set]
-    cwd_hint = f" (always resolve paths as absolute paths under `{cwd}`)" if cwd else " (always use absolute paths)"
+    cwd_hint = f" under `{cwd}`" if cwd else ""
 
     lines = [
-        f"[TOOL EXECUTION PROTOCOL — DSH-TP v1.1 | TURN_NONCE={nonce}]",
+        f"[DSH-TP v1.2 | TURN_NONCE={nonce}]",
         (
-            "You are serving inside an external client application that executes functions on its own side "
-            "whenever you emit structured function-call tags. Do NOT refuse by saying you lack file/shell/tool "
-            "access; emit the structured tag below and the client will execute it and return [Tool Result] in the next user turn."
+            f"This local coding IDE executes host tools on your behalf when you output top-level `<dsh_call_{nonce}>...</dsh_call_{nonce}>` outside code fences "
+            f"(write/edit files via tools instead of pasting full files or opening Canvas; stop after emitting tool calls and wait for `[Tool Result]`)."
         ),
     ]
 
@@ -1322,106 +1320,42 @@ def build_dsh_tp_system_instructions(
     if tc_directive:
         lines.append(tc_directive)
 
-    rule1 = (
-        f"1. Output ONLY top-level `<dsh_call_{nonce}>...</dsh_call_{nonce}>` envelopes "
-        "(NEVER wrap tool envelopes inside Markdown ``` code fences, and NEVER open Gemini Canvas / immersive documents)."
+    lines.append(
+        f'JSON: <dsh_call_{nonce}>{{"name":"Tool","input":{{...}}}}</dsh_call_{nonce}> | '
+        f'RAW (multi-line/code, no JSON escaping; optional type="int"|"bool"|"json"): '
+        f'<dsh_call_{nonce} tool="Write" mode="raw"><dsh_arg_{nonce} name="file_path">{cwd or "/abs/path"}/f</dsh_arg_{nonce}>'
+        f'<dsh_arg_{nonce} name="content">...</dsh_arg_{nonce}></dsh_call_{nonce}>'
     )
-    if has_write or has_edit:
-        writers = " or ".join(f"`{w}`" for w in ("Write", "Edit") if w in names_set)
-        rule1 += f" Never paste file contents in chat telling the user to save them manually — always write/modify files directly via {writers}."
-    lines.append(rule1)
-    lines.append("2. In explanatory prose or documentation examples, NEVER write the live nonce; use `<dsh_call_EXAMPLE>` instead.")
-
+    meta_notes = ["Never write live nonce in prose (use `<dsh_call_EXAMPLE>`)."]
     if has_bash:
-        json_ex = f'<dsh_call_{nonce}>{{"name": "Bash", "input": {{"command": "rg --files", "description": "List project files"}}}}</dsh_call_{nonce}>'
-    else:
-        sample = all_tools[0]
-        s_schema = sample.get("parameters") or sample.get("inputSchema") or {}
-        s_props = s_schema.get("properties") or {}
-        s_reqs = list(s_schema.get("required") or [])
-        s_key = s_reqs[0] if s_reqs else (next(iter(s_props), None))
-        sample_inp = {s_key: "..."} if s_key else {}
-        json_ex = f'<dsh_call_{nonce}>{json.dumps({"name": sample["name"], "input": sample_inp}, ensure_ascii=False)}</dsh_call_{nonce}>'
-    lines.append("3. Standard JSON invocation format:")
-    lines.append(f"   {json_ex}")
-
-    lines.append(
-        "4. Zero-escape RAW invocation format (ideal for multi-line code, HTML, or quoted arguments without JSON escaping; "
-        'non-string args support `type="int"`, `type="bool"`, or `type="json"` attributes on `<dsh_arg_...>`):'
-    )
-    if has_write:
-        lines.extend([
-            f'   <dsh_call_{nonce} tool="Write" mode="raw">',
-            f'   <dsh_arg_{nonce} name="file_path">{cwd or "/abs/path"}/example.html</dsh_arg_{nonce}>',
-            f'   <dsh_arg_{nonce} name="content">...exact raw file content...</dsh_arg_{nonce}>',
-            f"   </dsh_call_{nonce}>",
-        ])
-    elif has_edit:
-        lines.extend([
-            f'   <dsh_call_{nonce} tool="Edit" mode="raw">',
-            f'   <dsh_arg_{nonce} name="file_path">{cwd or "/abs/path"}/example.py</dsh_arg_{nonce}>',
-            f'   <dsh_arg_{nonce} name="old_string">...exact text to replace...</dsh_arg_{nonce}>',
-            f'   <dsh_arg_{nonce} name="new_string">...replacement text...</dsh_arg_{nonce}>',
-            f'   <dsh_arg_{nonce} name="replace_all" type="bool">false</dsh_arg_{nonce}>',
-            f"   </dsh_call_{nonce}>",
-        ])
-    else:
-        sample_name = all_tools[0]["name"]
-        lines.extend([
-            f'   <dsh_call_{nonce} tool="{sample_name}" mode="raw">',
-            f'   <dsh_arg_{nonce} name="arg_name">...raw string value...</dsh_arg_{nonce}>',
-            f'   <dsh_arg_{nonce} name="count" type="int">10</dsh_arg_{nonce}>',
-            f'   <dsh_arg_{nonce} name="flag" type="bool">true</dsh_arg_{nonce}>',
-            f'   <dsh_arg_{nonce} name="items" type="json">["a", "b"]</dsh_arg_{nonce}>',
-            f"   </dsh_call_{nonce}>",
-        ])
-
-    next_num = 5
-    if has_bash or path_tools:
-        note_parts = []
-        if has_bash:
-            note_parts.append("Each `Bash` call runs in an isolated subshell (`cd dir` does not persist across turns)")
-        if path_tools:
-            pt_list = ", ".join(f"`{p}`" for p in path_tools)
-            note_parts.append(f"always pass full absolute `file_path` to {pt_list}{cwd_hint}")
-        lines.append(f"{next_num}. Note: " + "; ".join(note_parts) + ".")
-        next_num += 1
-
-    lines.append(
-        f"{next_num}. Stop generating immediately after emitting the tool call envelope(s) and wait for the `[Tool Result]` turn before stating outcomes."
-    )
-    lines.append("")
-    lines.append("[ACTIVE TOOLS CATALOG]")
+        meta_notes.append("`Bash` runs in isolated subshells (`cd` does not persist).")
+    if has_write or has_edit or has_read:
+        meta_notes.append(f"Pass full absolute `file_path`{cwd_hint}.")
+    lines.append(" ".join(meta_notes))
+    lines.append("[TOOLS]")
 
     for t in all_tools:
         schema = t.get("parameters") or t.get("inputSchema") or {}
         props = schema.get("properties") or {}
         reqs = set(schema.get("required") or [])
-        origin_tag = " [Local-MCP]" if t.get("is_embedded_mcp") else ""
-        tdesc = re.sub(r"\s+", " ", str(t.get("description", ""))).strip()
-        if len(tdesc) > 400:
-            tdesc = tdesc[:397] + "..."
-        lines.append(f"- {t['name']}{origin_tag}: {tdesc}")
+        origin_tag = "[MCP] " if t.get("is_embedded_mcp") else ""
+        sig_parts = []
         for k, v in props.items():
             v_dict = v if isinstance(v, dict) else {}
             vtype = _format_schema_type(v_dict)
-            req_tag = " (required)" if k in reqs else ""
-            pdesc = re.sub(r"\s+", " ", str(v_dict.get("description", ""))).strip()
-            if len(pdesc) > 160:
-                pdesc = pdesc[:157] + "..."
-            if pdesc:
-                lines.append(f"    - {k}{req_tag} [{vtype}]: {pdesc}")
-            else:
-                lines.append(f"    - {k}{req_tag} [{vtype}]")
+            sig_parts.append(f"{k}{'*' if k in reqs else ''}:{vtype}")
+        sig_str = ", ".join(sig_parts)
+        tdesc = re.sub(r"\s+", " ", str(t.get("description", ""))).strip()
+        if len(tdesc) > 120:
+            tdesc = tdesc[:117] + "..."
+        lines.append(f"- {origin_tag}{t['name']}({sig_str}) — {tdesc}")
 
     missing_search = [n for n in ("Glob", "Grep") if n not in names_set]
     if missing_search and (has_bash or has_read):
         alts = []
         if has_bash:
-            alts.append("`Bash` (`rg` / `find` / `ls`)")
+            alts.append("`Bash` (`rg`/`find`/`ls`)")
         if has_read:
-            alts.append("`Read` (`file_path`)")
-        lines.append(
-            f"NOTE: {'/'.join(f'`{m}`' for m in missing_search)} not in tool catalog; use {' and '.join(alts)} for file discovery and reading."
-        )
+            alts.append("`Read`")
+        lines.append(f"Note: {'/'.join(missing_search)} inactive; use {' + '.join(alts)}.")
     return "\n".join(lines)

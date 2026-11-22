@@ -1,12 +1,12 @@
 {
   "project": "gemini-app-api-poc",
-  "target_version": "4.6.0-clean-carbon",
-  "started_at": "2026-11-17T20:58:36+0800",
+  "target_version": "5.0.0-pure-api",
+  "started_at": "2026-11-20T19:37:43+0800",
   "stages": [
     {
       "stage": "1. preflight_env",
       "status": "PASS",
-      "elapsed_ms": 7,
+      "elapsed_ms": 8,
       "details": {
         "files_audited_zero_acp": 7
       }
@@ -14,13 +14,13 @@
     {
       "stage": "2. build_native",
       "status": "PASS",
-      "elapsed_ms": 22,
+      "elapsed_ms": 20,
       "details": {
-        "version": "4.6.0-clean-carbon",
-        "dsh-mcp-stdio_sha256": "422b79277819c421da54b72f1c7a5125516023c0390882551f0c591962ed1a88",
-        "dsh-webkit-bridge_sha256": "d5c202518850dee65aac7b1642b3e3db9b263cfc47f0f771d46f1b59f4f5c4d8",
-        "webkit_binary_bytes": 354736,
-        "mcp_binary_bytes": 33600,
+        "version": "5.0.0-pure-api",
+        "dsh-mcp-stdio_sha256": "bc19fde7c87dee8b7ac0645f127f95206b5c85146969754b8c1937b3768ed66d",
+        "dsh-webkit-bridge_sha256": "404437c8437a9628d82bbe89498cfec2e01ffed2dece589f652f35a7b0968091",
+        "webkit_binary_bytes": 356032,
+        "mcp_binary_bytes": 33952,
         "macho_arch": "Mach-O 64-bit executable arm64",
         "codesign_verified": true,
         "rebuilt_targets": []
@@ -29,7 +29,7 @@
     {
       "stage": "3. unit_fsm_and_mcp",
       "status": "PASS",
-      "elapsed_ms": 98,
+      "elapsed_ms": 100,
       "details": {
         "session_key_stability": "PASS (explicit session-id never fractures)",
         "fsm_1byte_and_example_guard": "PASS",
@@ -45,9 +45,9 @@
     {
       "stage": "4. protocol_e2e",
       "status": "PASS",
-      "elapsed_ms": 3755,
+      "elapsed_ms": 3888,
       "details": {
-        "zero_quota_fast_paths": "PASS (0 upstream calls)",
+        "pure_api_strict_400_and_real_passthrough": "PASS (strict 400 + real upstream pass-through)",
         "pure_layer_b_short_circuit": "PASS",
         "mixed_layer_ab_stitching": "PASS",
         "lossless_48k_pagination": "PASS",
@@ -62,7 +62,7 @@
     {
       "stage": "5. torture_soak_matrix",
       "status": "PASS",
-      "elapsed_ms": 7598,
+      "elapsed_ms": 12925,
       "details": {
         "cold_start_warmup_auto_retry": "PASS (recovered after 2 BRIDGE_WARMING_UP polls)",
         "canned_http200_error_self_heal": "PASS (intercepted canned error & replayed cold cleanly)",
@@ -78,23 +78,25 @@
     {
       "stage": "6. live_smoke_gate",
       "status": "PASS",
-      "elapsed_ms": 1568,
+      "elapsed_ms": 1580,
       "details": {
         "mode": "socketpair+fifo_verified",
-        "version": "4.6.0-clean-carbon",
+        "version": "5.0.0-pure-api",
         "acp_spawned": false,
         "readyz_endpoint": "PASS",
         "webkit_binary_exists": true,
         "embedded_local_mcp_servers": 2,
         "plane2_fifo_bus": "PASS",
         "models_registered": [
-          "gemini-app-carbon",
-          "gemini-app-thinking",
-          "gemini-app-fast"
+          "gemini-4-neon",
+          "gemini-4-carbon",
+          "gemini-4-hydrogen",
+          "gemini-4-argon",
+          "gemini-3.5-flash-lite"
         ]
       }
     }
   ],
   "overall_status": "PASS",
-  "total_elapsed_ms": 13051
+  "total_elapsed_ms": 18524
 }

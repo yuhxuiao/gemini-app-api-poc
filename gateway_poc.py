@@ -50,7 +50,7 @@ from streaming_envelope_parser import (
 )
 from webkit_plane_client import WebKitPlaneClient
 
-GATEWAY_VERSION = "4.6.0-clean-carbon"
+GATEWAY_VERSION = "5.0.0-pure-api"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HTTP_HOST = os.environ.get("DSH_GATEWAY_HOST", "127.0.0.1")
 HTTP_PORT = int(os.environ.get("DSH_GATEWAY_PORT", "18896"))
@@ -61,7 +61,7 @@ LOCAL_MCP_CONFIG = os.environ.get("DSH_LOCAL_MCP_CONFIG", os.path.join(SCRIPT_DI
 ACCOUNT_LOCK_FILE = os.environ.get("DSH_ACCOUNT_LOCK_FILE", os.path.join(SCRIPT_DIR, "runtime", "account_lock.json"))
 SESSIONS_CACHE_FILE = os.environ.get("DSH_SESSIONS_CACHE_FILE", os.path.join(SCRIPT_DIR, "runtime", "sessions_cache.json"))
 SESSION_CACHE_TTL_SEC = float(os.environ.get("DSH_SESSION_CACHE_TTL_SEC", "43200"))
-SESSION_IDLE_CLEAN_SEC = float(os.environ.get("DSH_SESSION_IDLE_CLEAN_SEC", "900"))
+SESSION_IDLE_CLEAN_SEC = float(os.environ.get("DSH_SESSION_IDLE_CLEAN_SEC", "14400"))
 
 BATCH_WINDOW_SEC = float(os.environ.get("DSH_BATCH_WINDOW_SEC", "0.08"))
 RELAY_INTERVAL_SEC = float(os.environ.get("DSH_RELAY_SEC", "50.0"))
@@ -71,7 +71,7 @@ SOFT_WATERMARK_TOKENS = int(os.environ.get("DSH_WATERMARK_TOKENS", "192000"))
 HARD_CEILING_TOKENS = int(os.environ.get("DSH_HARD_WATERMARK_TOKENS", "240000"))
 MAX_TOOL_RESULT_CHARS = int(os.environ.get("DSH_MAX_TOOL_CHARS", "240000"))
 WEB_RPC_PAGE_CHARS = int(os.environ.get("DSH_WEB_RPC_PAGE_CHARS", "48000"))
-MAX_INTERNAL_MCP_HOPS = int(os.environ.get("DSH_MAX_MCP_HOPS", "12"))
+MAX_INTERNAL_MCP_HOPS = int(os.environ.get("DSH_MAX_MCP_HOPS", "30"))
 MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024
 MAX_TOOL_PAGES_PER_SESSION = 32
 UNSUPPORTED_MULTIMODAL_TYPES = {"image", "image_url", "input_image", "document", "input_file", "file"}
@@ -120,25 +120,41 @@ DISCONNECT_ERRNOS = {
 
 SUPPORTED_MODELS = [
     {
-        "id": "gemini-app-carbon",
+        "id": "gemini-4-neon",
+        "alias": "gemini-4-neon",
+        "label": "Gemini 4 Neon (主模型 · mode=3 · 纯 API 严格锁定 · 开放思考档位)",
+        "family": "gemini-web",
+        "context_window": 1048576,
+        "default_tier": "high",
+    },
+    {
+        "id": "gemini-4-carbon",
         "alias": "gemini-4-carbon",
-        "label": "Gemini Carbon (Web 旗舰 · Carbon / 4 Hydrogen High 显式思考)",
+        "label": "Gemini 4 Carbon (旗舰 · mode=8 · 纯 API 严格锁定)",
         "family": "gemini-web",
         "context_window": 1048576,
         "default_tier": "high",
     },
     {
-        "id": "gemini-app-thinking",
+        "id": "gemini-4-hydrogen",
+        "alias": "gemini-4-hydrogen",
+        "label": "Gemini 4 Hydrogen (高速思考 · mode=1 · 纯 API 严格锁定)",
+        "family": "gemini-web",
+        "context_window": 1048576,
+        "default_tier": "high",
+    },
+    {
+        "id": "gemini-4-argon",
         "alias": "gemini-4-argon",
-        "label": "Gemini Thinking (4 Hydrogen High · 深度显式思考)",
+        "label": "Gemini 4 Argon (mode=8 · hex=1bc6b5d98741cd3d · 纯 API 严格锁定)",
         "family": "gemini-web",
         "context_window": 1048576,
         "default_tier": "high",
     },
     {
-        "id": "gemini-app-fast",
-        "alias": "gemini-3.8-flash",
-        "label": "Gemini Fast (4 Hydrogen Low · 极速响应)",
+        "id": "gemini-3.5-flash-lite",
+        "alias": "gemini-3.5-flash-lite",
+        "label": "Gemini 3.5 Flash-Lite (极速 · mode=6 · 纯 API 严格锁定)",
         "family": "gemini-web",
         "context_window": 1048576,
         "default_tier": "low",
@@ -273,8 +289,26 @@ def sanitize_outbound_text(s: str) -> str:
     return BILLING_HEADER_RE.sub("", s)
 
 
+_SAFETY_BOILERPLATE_MARKERS = (
+    "destructive techniques",
+    "dos attacks",
+    "mass targeting",
+    "supply chain compromise",
+    "detection evasion",
+    "c2 frameworks",
+    "credential testing",
+    "exploit development",
+    "dual-use security",
+    "authorized security testing",
+    "ctf challenges",
+    "malicious purposes",
+    "prompt injection",
+    "jailbreak",
+)
+
+
 def prune_client_system_prompt(raw_sys: str) -> str:
-    """Strips client billing headers, Claude Code identity boilerplate, and `<system-reminder>` blocks from `system_text`."""
+    """Prompt Cleanroom v2: strips billing headers, Claude Code identity/safety-policy boilerplate that trips Gemini Web safety filters, and `<system-reminder>` noise."""
     if not raw_sys:
         return ""
     s = BILLING_HEADER_RE.sub("", raw_sys).replace("\r\n", "\n")
@@ -284,10 +318,57 @@ def prune_client_system_prompt(raw_sys: str) -> str:
     kept = []
     for line in s.split("\n"):
         stripped = line.strip()
-        if stripped.startswith("You are Claude Code") or stripped.startswith("You are a Claude agent"):
+        low = stripped.lower()
+        if (
+            stripped.startswith("You are Claude Code")
+            or stripped.startswith("You are a Claude agent")
+            or "github.com/anthropics/claude-code/issues" in low
+            or stripped.startswith("If the user asks for help or wants to give feedback")
+            or any(marker in low for marker in _SAFETY_BOILERPLATE_MARKERS)
+        ):
             continue
         kept.append(line)
-    return "\n".join(kept).strip()
+    cleaned = "\n".join(kept).strip()
+    return re.sub(r"\n{3,}", "\n\n", cleaned)
+
+
+def build_semantic_working_memory(messages_slice: list, max_chars: int = 3600) -> str:
+    """Extracts touched file paths, code landmarks, and recent errors from older dehydrated turns during 256K rollover."""
+    if not messages_slice or len(messages_slice) <= 4:
+        return ""
+    older = messages_slice[:-4]
+    touched_paths: List[str] = []
+    seen_paths: Set[str] = set()
+    landmarks: List[str] = []
+    seen_lm: Set[str] = set()
+    errors: List[str] = []
+    path_re = re.compile(r"(?:/[A-Za-z0-9._-]+){2,}\.[A-Za-z0-9]{1,8}")
+    for m in older:
+        txt = format_single_message_clean(m, max_result_chars=8000, tombstone_dehydrate=False, strip_reminders=True)
+        if not txt:
+            continue
+        for pm in path_re.findall(txt):
+            if pm not in seen_paths and len(touched_paths) < 28:
+                seen_paths.add(pm)
+                touched_paths.append(pm)
+        for ln in txt.splitlines():
+            s_ln = ln.strip()
+            if LANDMARK_LINE_RE.match(ln) and s_ln not in seen_lm and len(landmarks) < 24:
+                seen_lm.add(s_ln)
+                landmarks.append(s_ln[:110])
+            elif ("Error:" in s_ln or "Traceback" in s_ln or "FAILED" in s_ln) and len(errors) < 8:
+                errors.append(s_ln[:140])
+    blocks: List[str] = []
+    if touched_paths:
+        blocks.append("Touched files: " + ", ".join(touched_paths))
+    if landmarks:
+        blocks.append("Key symbols/headings:\n" + "\n".join(f"- {x}" for x in landmarks))
+    if errors:
+        blocks.append("Prior errors/signals:\n" + "\n".join(f"- {x}" for x in errors))
+    if not blocks:
+        return ""
+    out = "[DSH_WORKING_MEMORY_SUMMARY]\n" + "\n".join(blocks)
+    return out[:max_chars]
 
 
 def detect_cwd_from_context(sys_text: str, messages: list) -> Tuple[str, bool]:
@@ -518,11 +599,9 @@ def resolve_model_and_tier(requested: Any, body: dict) -> Tuple[dict, str]:
     if effort_raw and not isinstance(effort_raw, str):
         raise ValueError("'reasoning_effort'/'effort' must be a string")
     effort = str(effort_raw or "").strip().lower()
-    if effort in ("low", "medium", "high"):
+    if effort in ("low", "medium", "high", "xhigh", "max"):
         tier = effort
-    elif effort in ("xhigh", "max"):
-        tier = "high"
-    elif effort == "minimal":
+    elif effort in ("minimal", "none", "off", "disabled"):
         tier = "low"
     elif effort:
         raise ValueError(f"Unsupported reasoning effort: {effort_raw!r}")
@@ -535,7 +614,6 @@ def resolve_model_and_tier(requested: Any, body: dict) -> Tuple[dict, str]:
         if thk_type and thk_type not in ("enabled", "adaptive", "disabled"):
             raise ValueError(f"Unsupported thinking.type: {thk_type!r}")
         if thk_type == "disabled":
-            # Explicitly override any `-high` suffix or effort tier when thinking is disabled.
             tier = "low"
         elif thk_type in ("enabled", "adaptive"):
             raw_budget = thk_raw.get("budget_tokens")
@@ -555,14 +633,11 @@ def resolve_model_and_tier(requested: Any, body: dict) -> Tuple[dict, str]:
             elif not tier:
                 tier = "high"
 
+    if not s:
+        raise ValueError(f"Missing required 'model'. Supported native models: {', '.join(MODEL_BY_ID.keys())}")
     info = MODEL_BY_ID.get(s)
     if info is None:
-        if "fast" in s or "flash" in s or "haiku" in s:
-            info = MODEL_BY_ID["gemini-app-fast"]
-        elif "thinking" in s or "sonnet" in s:
-            info = MODEL_BY_ID["gemini-app-thinking"]
-        else:
-            info = MODEL_BY_ID["gemini-app-carbon"]
+        raise ValueError(f"Unknown model {requested!r}. Pure-API strict mode accepts only native IDs: {', '.join(MODEL_BY_ID.keys())}")
 
     if not tier:
         tier = info.get("default_tier", "high")
@@ -591,9 +666,9 @@ def should_emit_thinking(body: dict, model_info: dict, tier: str, is_openai: boo
         ).strip().lower()
         return effort not in ("none", "off", "disabled")
 
-    if model_info.get("id") == "gemini-app-fast" or is_openai:
+    if model_info.get("id") == "gemini-3.5-flash-lite" or is_openai:
         return False
-    return tier != "low" or model_info.get("id") in ("gemini-app-carbon", "gemini-app-thinking")
+    return tier != "low"
 
 
 def extract_stop_sequences(body: dict) -> List[str]:
@@ -700,10 +775,8 @@ def estimate_output_tokens(outcome: dict, include_thinking: bool = True) -> int:
     think_s = str(outcome.get("thinking") or "") if include_thinking else ""
     tcs = outcome.get("tool_calls") or []
     tools_s = json.dumps(tcs, ensure_ascii=False) if tcs else ""
-    total_chars = len(text_s) + len(think_s) + len(tools_s)
-    if total_chars <= 0:
-        return 1
-    return max(1, int(math.ceil(total_chars / 3.95)))
+    total_tok = est_tokens_str(text_s) + est_tokens_str(think_s) + est_tokens_str(tools_s)
+    return max(1, total_tok)
 
 
 def apply_stop_sequences_to_text(text: str, stop_seqs: List[str]) -> Tuple[str, Optional[str]]:
@@ -909,6 +982,8 @@ def format_single_message_clean(
     if role == "tool":
         tc_id = str(m.get("tool_call_id") or "")
         raw_c = _extract_content_text(m.get("content", ""))
+        if strip_reminders:
+            raw_c = ANY_SYS_REMINDER_RE.sub("", raw_c)
         formatted_c = _format_tool_result_text(raw_c, max_result_chars, tombstone_dehydrate, paginate_fn)
         sep = "\n" if paginate_fn is not None else " "
         return f"[Tool Result ({tc_id})]:{sep}{formatted_c}"
@@ -936,7 +1011,7 @@ def format_single_message_clean(
                 if txt:
                     parts.append(txt)
             elif btype == "tool_use":
-                inp_json = json.dumps(blk.get("input", {}), ensure_ascii=False)
+                inp_json = json.dumps(blk.get("input", {}), ensure_ascii=False, sort_keys=True)
                 if tombstone_dehydrate:
                     inp_json = _dehydrate_text(inp_json, max_chars=2000, head_chars=800, tail_chars=400)
                 parts.append(f"[Tool Call ({blk.get('name')}, id={blk.get('id')})]: {inp_json}")
@@ -948,6 +1023,8 @@ def format_single_message_clean(
                     c = ""
                 else:
                     c = str(c)
+                if strip_reminders:
+                    c = ANY_SYS_REMINDER_RE.sub("", c)
                 formatted_c = _format_tool_result_text(c, max_result_chars, tombstone_dehydrate, paginate_fn)
                 sep = "\n" if (paginate_fn is not None and not tombstone_dehydrate) else " "
                 parts.append(f"[Tool Result ({blk.get('tool_use_id')})]:{sep}{formatted_c}")
@@ -1201,7 +1278,7 @@ class SessionState:
         self.next_delta_q: "queue.Queue[dict]" = queue.Queue()
         self.worker_waiting_next = False
         self.in_flight = False
-        self.model_id: str = "gemini-app-carbon"
+        self.model_id: str = "gemini-4-neon"
         self.tier: str = "high"
         self.account: str = ""
         self.synced_msg_count: int = 0
@@ -1720,6 +1797,7 @@ class SessionCursorStore:
             sess.account = str(rec.get("account", ""))
             sess.last_sys_sig = str(rec.get("last_sys_sig", ""))
             sess.last_tools_sig = str(rec.get("last_tools_sig", ""))
+            sess.had_host_tools = bool(rec.get("had_host_tools", False))
             sess.cursor_checkpoints = restored_cps
         return True
 
@@ -1755,6 +1833,7 @@ class SessionCursorStore:
                     "account": str(sess.account),
                     "last_sys_sig": str(sess.last_sys_sig),
                     "last_tools_sig": str(sess.last_tools_sig),
+                    "had_host_tools": bool(sess.had_host_tools),
                     "cursor_checkpoints": cps_ser,
                     "updated_at": time.time(),
                 }
@@ -1951,10 +2030,30 @@ class GatewayRegistry:
             return self.by_token.get(token)
 
     def record_turn(self, entry: dict) -> None:
+        # Strict whitelist projection: NEVER store raw conversation text, thinking, or tool_calls in telemetry.
+        safe = {
+            "ts": time.strftime("%H:%M:%S"),
+            "status": str(entry.get("status") or "ok"),
+            "model": str(entry.get("model") or ""),
+            "tier": str(entry.get("tier") or ""),
+            "routed_model": str(entry.get("routed_model") or ""),
+            "wire_slot_79": entry.get("wire_slot_79"),
+            "wire_slot_80": entry.get("wire_slot_80"),
+            "mode": str(entry.get("mode") or ""),
+            "stream_mode": str(entry.get("stream_mode") or ""),
+            "stop_reason": str(entry.get("stop_reason") or ""),
+            "think_chars": len(str(entry.get("thinking") or "")),
+            "text_chars": len(str(entry.get("text") or "")),
+            "tool_calls_count": len(entry.get("tool_calls") or []),
+            "ttft_ms": int(entry.get("ttft_ms") or 0),
+            "elapsed_ms": int(entry.get("elapsed_ms") or 0),
+            "ctx_tokens": int(entry.get("ctx_tokens") or 0),
+            "cached_tokens": int(entry.get("cached_tokens") or 0),
+            "retries": int(entry.get("retries") or 0),
+            "error": str(entry.get("error") or "")[:200],
+        }
         with self.lock:
-            entry["ts"] = time.strftime("%H:%M:%S")
-            entry["think_chars"] = len(str(entry.get("thinking") or ""))
-            self.telemetry.append(entry)
+            self.telemetry.append(safe)
             if len(self.telemetry) > 200:
                 self.telemetry = self.telemetry[-200:]
 
@@ -2173,7 +2272,7 @@ def format_plane1_delta_prompt(
         if tool_guide:
             parts.append(tool_guide)
         if clean_sys:
-            parts.append(f"[System Instructions]\n{clean_sys}")
+            parts.append(f"[Workspace & Coding Guidelines]\n{clean_sys}")
     else:
         tools_changed = (cur_tools_sig != prev_tools_sig)
         sys_changed = (cur_sys_sig != prev_sys_sig)
@@ -2184,23 +2283,25 @@ def format_plane1_delta_prompt(
             elif prev_tools_sig:
                 parts.append("[Tools Update]: All tools are inactive for this turn; respond directly in plain text.")
         elif tool_guide:
-            write_dir_hint = cwd if explicit_cwd else "/abs/path"
             parts.append(
-                f"[DSH-TP v1.1 TURN_NONCE={nonce}]: Emit `<dsh_call_{nonce}>...</dsh_call_{nonce}>` outside code fences "
-                f"(MANDATORY `<dsh_call_{nonce} tool=\"Write\" mode=\"raw\"><dsh_arg_{nonce} name=\"file_path\">{write_dir_hint}/...</dsh_arg_{nonce}><dsh_arg_{nonce} name=\"content\">...</dsh_arg_{nonce}></dsh_call_{nonce}>` "
-                f"for multi-line `Write`/`Edit`; NEVER open Canvas and NEVER paste code asking the user to save it manually)."
+                f"[DSH-TP v1.2 TURN_NONCE={nonce}]: Emit `<dsh_call_{nonce}>...</dsh_call_{nonce}>` outside code fences (use `mode=\"raw\"` for multi-line `Write`/`Edit`)."
             )
 
         if sys_changed:
             if clean_sys:
-                parts.append(f"[System Instructions]\n{clean_sys}")
+                parts.append(f"[Workspace & Coding Guidelines]\n{clean_sys}")
             elif prev_sys_sig:
-                parts.append("[System Instructions Cleared]")
+                parts.append("[Workspace Guidelines Cleared]")
 
     if stitched_layer_b:
         for item in stitched_layer_b:
             paged_b = sess.paginate_tool_text(item["text"], budget_chars=WEB_RPC_PAGE_CHARS)
             parts.append(f"[Local MCP Tool Result ({item['server']}/{item['tool']})]:\n{paged_b}")
+
+    if tombstone_rollover and not is_delta:
+        wm_summary = build_semantic_working_memory(messages_slice)
+        if wm_summary:
+            parts.append(wm_summary)
 
     parts.append("[Conversation Update]" if is_delta else "[Conversation History]")
     total_msgs = len(messages_slice)
@@ -2750,7 +2851,7 @@ def classify_sideband_ephemeral_call(
     if ("<block>" in combined_low and "</block>" in combined_low) or (
         "<block>" in combined_low and ("security" in combined_low or "command" in combined_low or "classifier" in combined_low or "reason>" in combined_low)
     ):
-        return True, MODEL_BY_ID["gemini-app-fast"], "ephem_classifier"
+        return True, None, "ephem_classifier"
 
     if is_cc_caller and (
         "omitting technical" in combined_low
@@ -2758,7 +2859,7 @@ def classify_sideband_ephemeral_call(
         or "conversational recap" in combined_low
         or ("in plain language" in combined_low and "summary" in combined_low)
     ):
-        return True, MODEL_BY_ID["gemini-app-fast"], "ephem_recap"
+        return True, None, "ephem_recap"
 
     if req_cls and req_cls not in ("interactive", "main", "default", "chat", "agent", "primary"):
         return True, None, f"ephem_{req_cls}"
@@ -3218,6 +3319,10 @@ def execute_turn(
                             sess.net_context_tokens = sent_wire_tok + out_wire_tok
                         else:
                             sess.net_context_tokens = base_ctx_for_wire + sent_wire_tok + out_wire_tok
+                        if p1_is_delta and prev_cnt in sess.cursor_checkpoints:
+                            old_cp = sess.cursor_checkpoints[prev_cnt]
+                            if len(old_cp) >= 5 and not old_cp[4]:
+                                sess.cursor_checkpoints[prev_cnt] = (old_cp[0], old_cp[1], old_cp[2], old_cp[3], True)
                         new_cnt = len(messages) + 1
                         sess.synced_msg_count = new_cnt
                         cur_committed = bool(outcome.get("cursor_committed", True))
@@ -3587,7 +3692,7 @@ def handle_shared_mcp_rpc(body: dict) -> dict:
 
     if tool_name in ("dsh_wait_request", "dsh_await_request"):
         wid = str(args.get("worker_id", "")).strip()
-        wmodel = str(args.get("worker_model", "gemini-app-carbon")).strip()
+        wmodel = str(args.get("worker_model", "gemini-4-neon")).strip()
         return {"jsonrpc": "2.0", "id": msg_id, "result": WORKER_POOL.wait_for_prompt(wid, wmodel)}
 
     session_token = str(args.get("session_token") or params.get("session_token") or "").strip()
@@ -3710,7 +3815,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
-<title>Dual-Plane v4.6 (4.6.0-clean-carbon) · 满血 4 Carbon High x 网页会话无痕自净控制台</title>
+<title>Dual-Plane v5.0 (5.0.0-pure-api) · 纯 API 严格模型锁定控制台</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: #f7f6f2; color: #1f1f1f; margin: 24px; max-width: 1220px; }
   h1 { font-size: 20px; margin: 0 0 6px 0; }
@@ -3736,8 +3841,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 </style>
 </head>
 <body>
-  <h1>Gemini.app x Claude Code 本地网关 (Dual-Plane v4.6 · 满血 4 Carbon 深度思考 + 无痕自净)</h1>
-  <div class="sub">默认满血 4 Carbon High (防超时降智) · 旁路审查隔离即用即焚 · 网页侧边栏会话全自动清理 · 支持 Gemini.app 单会话守护接管</div>
+  <h1>Gemini.app x Claude Code 本地网关 (v5.0.0-pure-api · 纯 API 严格锁模 + DSH-TP v1.2)</h1>
+  <div class="sub">默认主模型 4 Neon · 严格 1:1 锁模零自动路由 · 开放思考档位 (/effort) · 旁路隔离即用即焚 · 网页侧边栏自动清理</div>
   <div class="cards" id="cards"></div>
   <div class="toolbar">
     <button class="btn pri" onclick="copyAppReuseCmd()">复制 Gemini.app 单会话守护口令 (Plane 2)</button>
@@ -3745,7 +3850,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <button class="btn warn" onclick="cleanWebChats()">立即清理网关网页会话</button>
     <button class="btn" onclick="switchWebAccount()">切换 / 重绑 Google 账号</button>
     <button class="btn" onclick="pinAccountPrompt()">锁定指定邮箱防串号</button>
-    <button class="btn" onclick="copyCmd('/model gemini-app-carbon', '已复制切换 Carbon 命令')">/model Carbon</button>
+    <button class="btn" onclick="copyCmd('/model gemini-4-neon', '已复制切换 Neon 命令')">/model Neon</button>
     <span class="toast" id="toast"></span>
   </div>
   <table>
@@ -3786,7 +3891,7 @@ async function cleanWebChats() {
 }
 function copyAppReuseCmd() {
   const ipc = latestState.ipc_dir || '/tmp/dsh_gemini_ipc_18896';
-  const txt = `请在当前 Gemini.app Task 或 Antigravity 会话中执行常驻守护值守命令（RequiresNetworkAccess=false）：/usr/bin/python3 /tmp/dsh_worker_cli.py daemon --ipc-dir ${ipc} --model gemini-app-carbon --max-idle 1800`;
+  const txt = `请在当前 Gemini.app Task 或 Antigravity 会话中执行常驻守护值守命令（RequiresNetworkAccess=false）：/usr/bin/python3 /tmp/dsh_worker_cli.py daemon --ipc-dir ${ipc} --model gemini-4-neon --max-idle 1800`;
   navigator.clipboard.writeText(txt).then(() => flashToast('已复制守护口令！粘贴进 Gemini.app 的 1 个 Task（省会话/走 Web 额度）或 Antigravity 面板（零 Web 记录/走 agy）即可接管'));
 }
 function copyCmd(txt, okMsg) {
@@ -3829,7 +3934,7 @@ async function refresh() {
       <td>${t.ttft_ms} ms</td>
       <td>${t.elapsed_ms} ms</td>
       <td>${((t.ctx_tokens||0)/1000).toFixed(1)}K / ${wmK}K</td>
-    </tr>`).join('') : '<tr><td colspan="8" style="color:#777">Dual-Plane v4.6 网关已就绪：默认满血 4 Carbon High + 网页会话自动无痕清理...</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="8" style="color:#777">v5.0.0-pure-api 纯 API 网关已就绪：默认 4 Neon + 严格锁模 + DSH-TP v1.2 减负...</td></tr>';
 }
 refresh();
 setInterval(refresh, 2500);
@@ -4085,15 +4190,8 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
             if parsed.scheme not in ("http", "https") or host not in ("127.0.0.1", "localhost", "::1"):
                 self._send_json(403, {"ok": False, "error": f"Cross-origin admin request blocked: {origin}"})
                 return False
-            req_host_hdr = lower_hdrs.get("host", "")
-            req_port = None
-            if ":" in req_host_hdr and not req_host_hdr.endswith("]"):
-                try:
-                    req_port = int(req_host_hdr.rsplit(":", 1)[1])
-                except ValueError:
-                    req_port = None
-            expected_port = req_port or HTTP_PORT
-            if parsed.port is not None and parsed.port != expected_port:
+            origin_port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+            if origin_port != HTTP_PORT:
                 self._send_json(403, {"ok": False, "error": f"Cross-port admin origin blocked: {origin}"})
                 return False
 
@@ -4214,6 +4312,8 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
             or "rate limit" in low
             or "resource_exhausted" in low
             or "code=1037" in low
+            or "code=1095" in low
+            or "[1095]" in msg
             or "code=8 " in low
         ):
             return 429, "rate_limit_error", msg, "rate_limit_exceeded"
@@ -4444,7 +4544,7 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def _serve_anthropic_messages(self, hdrs: dict, body: dict):
         try:
-            req_model = body.get("model", "gemini-app-carbon")
+            req_model = body.get("model", "")
             model_info, tier = resolve_model_and_tier(req_model, body)
             raw_messages = self._validate_messages_list(body.get("messages"), allow_empty=False)
             tools = body.get("tools") or []
@@ -4478,7 +4578,7 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
         sys_text, messages = fold_mid_stream_system_messages(base_sys, raw_messages)
         active_tools = [] if tool_choice_mode == "none" else tools
 
-        fast_txt = classify_fast_utility_call(hdrs, sys_text, active_tools, messages, max_tok)
+        fast_txt = classify_fast_utility_call(hdrs, sys_text, active_tools, messages, max_tok) if os.environ.get("DSH_ENABLE_FAST_PATH") == "1" else None
         if fast_txt is not None:
             if not stream:
                 self._send_json(200, {
@@ -4554,6 +4654,7 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
                 },
             }, extra_headers={
                 "X-Served-Model": f"{model_id}/{tier}",
+                "X-Routed-Model": urllib.parse.quote(str(outcome.get("routed_model") or ""), safe=" -_./():"),
                 "X-Stream-Mode": outcome.get("stream_mode", ""),
                 "X-Turn-Mode": outcome.get("turn_mode", ""),
                 **self._cors_headers(True),
@@ -4816,7 +4917,7 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def _serve_openai_chat(self, hdrs: dict, body: dict):
         try:
-            req_model = body.get("model", "gemini-app-carbon")
+            req_model = body.get("model", "")
             model_info, tier = resolve_model_and_tier(req_model, body)
             messages = self._validate_messages_list(body.get("messages"), allow_empty=False)
             tools = body.get("tools") or []
@@ -4898,6 +4999,7 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
                 },
             }, extra_headers={
                 "X-Served-Model": f"{model_info['id']}/{tier}",
+                "X-Routed-Model": urllib.parse.quote(str(outcome.get("routed_model") or ""), safe=" -_./():"),
                 "X-Turn-Mode": str(outcome.get("turn_mode") or "cold_start"),
                 "X-Stream-Mode": str(outcome.get("stream_mode") or "plane1_webkit"),
                 **self._cors_headers(True),
@@ -4919,20 +5021,25 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
             "streamed_tool_ids": set(),
         }
 
+        oai_created_ts = int(time.time())
         def send_oai_chunk_locked(delta: dict, fin: Optional[str] = None) -> None:
             if sse_oai.closed or cancel_event.is_set() or not oai_state["opened"]:
                 return
             if not oai_state["role_sent"]:
                 oai_state["role_sent"] = True
                 p0 = {
-                    "id": cid, "object": "chat.completion.chunk", "created": int(time.time()), "model": req_model,
+                    "id": cid, "object": "chat.completion.chunk", "created": oai_created_ts, "model": req_model,
                     "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
                 }
+                if include_usage:
+                    p0["usage"] = None
                 sse_oai.write_raw(f"data: {json.dumps(p0, ensure_ascii=False)}\n\n".encode("utf-8"))
             p = {
-                "id": cid, "object": "chat.completion.chunk", "created": int(time.time()), "model": req_model,
+                "id": cid, "object": "chat.completion.chunk", "created": oai_created_ts, "model": req_model,
                 "choices": [{"index": 0, "delta": delta, "finish_reason": fin}],
             }
+            if include_usage:
+                p["usage"] = None
             sse_oai.write_raw(f"data: {json.dumps(p, ensure_ascii=False)}\n\n".encode("utf-8"))
 
         def on_stream_open(_meta: dict) -> None:
@@ -5077,7 +5184,7 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _serve_openai_responses(self, hdrs: dict, body: dict):
         try:
             norm = normalize_responses_body(body)
-            req_model = norm.get("model", "gemini-app-carbon")
+            req_model = norm.get("model", "")
             model_info, tier = resolve_model_and_tier(req_model, norm)
             messages = norm.get("messages") or []
             sys_text = str(norm.get("system") or "")
@@ -5129,10 +5236,11 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
                     "arguments": json.dumps(tc["input"], ensure_ascii=False),
                     "status": "completed",
                 })
-            cached_tok = int(outcome_obj.get("cached_tokens", 0))
+            cached_tok = max(0, min(int(outcome_obj.get("cached_tokens", 0)), in_tok))
             adj_out = dict(outcome_obj, text=final_text)
             out_tok = estimate_output_tokens(adj_out, include_thinking=allow_thinking)
             reason_tok = est_tokens_str(outcome_obj.get("thinking", "")) if (allow_thinking and outcome_obj.get("thinking")) else 0
+            reason_tok = min(reason_tok, out_tok)
             return {
                 "id": rid,
                 "object": "response",
@@ -5170,6 +5278,7 @@ class GatewayHTTPHandler(http.server.BaseHTTPRequestHandler):
                 final_text, _ = apply_stop_sequences_to_text(final_text, stop_seqs)
             self._send_json(200, _build_response_obj(outcome, final_text), extra_headers={
                 "X-Served-Model": f"{model_info['id']}/{tier}",
+                "X-Routed-Model": urllib.parse.quote(str(outcome.get("routed_model") or ""), safe=" -_./():"),
                 "X-Turn-Mode": str(outcome.get("turn_mode") or "cold_start"),
                 "X-Stream-Mode": str(outcome.get("stream_mode") or "plane1_webkit"),
                 **self._cors_headers(True),

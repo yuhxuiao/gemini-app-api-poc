@@ -23,7 +23,7 @@ BIN_DIR = os.path.join(PROJECT_DIR, "bin")
 RUNTIME_DIR = os.path.join(PROJECT_DIR, "runtime")
 MANIFEST_PATH = os.path.join(RUNTIME_DIR, "build_manifest.json")
 REPORT_PATH = os.path.join(PROJECT_DIR, "workflow_report.json")
-TARGET_VERSION = "4.6.0-clean-carbon"
+TARGET_VERSION = "5.0.0-pure-api"
 
 
 def sha256_file(path: str) -> str:
@@ -563,7 +563,7 @@ def stage_build_native() -> dict:
     subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app_dir], check=True, capture_output=True, text=True)
     with open(app_plist, "r", encoding="utf-8") as fp:
         plist_txt = fp.read()
-    assert "4.6.0" in plist_txt, f"Expected 4.6.0 in {app_plist}"
+    assert "5.0.0" in plist_txt, f"Expected 5.0.0 in {app_plist}"
 
     manifest = {
         "version": TARGET_VERSION,
@@ -732,30 +732,28 @@ def stage_unit_fsm_and_mcp() -> dict:
                 },
             }, pfp)
         pcache_nov = WebProtoProfileCache(tmp_proto)
-        # Verify `Model_1bc6b5` (`1bc6b5d98741cd3d`, disabled `4 Argon`) NEVER hijacks `gemini-app-thinking` (`4 Hydrogen` -> `56fdd199312815e2`) or `gemini-app-carbon` (`95a4c0abcba24364`)!
-        hdrs_thk_guard = pcache_nov.resolve_extra_headers("gemini-app-thinking", tier="high")
-        ext_thk_guard = json.loads(hdrs_thk_guard["x-goog-ext-525001261-jspb"])
-        assert ext_thk_guard[4] == "56fdd199312815e2", f"Model_1bc6b5 hijacked thinking hex: {ext_thk_guard[4]}"
-        freq_c = json.loads(build_stream_generate_freq("hi", turn_index=2, model_id="gemini-app-carbon", tier="high", proto_cache=pcache_nov))
-        inner_c = json.loads(freq_c[1])
-        hdrs_c = pcache_nov.resolve_extra_headers("gemini-app-carbon", tier="high")
-        ext_c = json.loads(hdrs_c["x-goog-ext-525001261-jspb"])
-        assert "Cookie" not in hdrs_c
-        assert inner_c[17] == [[2]] and inner_c[32] == 1 and inner_c[79] == 8 and inner_c[80] == 2
-        assert ext_c[14] == 8 and ext_c[4] == "95a4c0abcba24364" and len(ext_c[8]) == 10 and ext_c[17] == ["boq_gemini-web-uiserver_20261115.13_p0"]
+        # Verify v5.0 Pure-API strict 1:1 native model pinning + 28-element x-goog-ext-525001261-jspb
+        for m_id, exp_mode, exp_hex in (
+            ("gemini-4-neon", 3, "797f3d0293f288ad"),
+            ("gemini-4-carbon", 8, "95a4c0abcba24364"),
+            ("gemini-4-hydrogen", 1, "56fdd199312815e2"),
+            ("gemini-4-argon", 8, "1bc6b5d98741cd3d"),
+            ("gemini-3.5-flash-lite", 6, "1d44b34bcaa1c04d"),
+        ):
+            fr_m = json.loads(build_stream_generate_freq("hi", turn_index=2, model_id=m_id, tier="high", proto_cache=pcache_nov))
+            in_m = json.loads(fr_m[1])
+            hd_m = pcache_nov.resolve_extra_headers(m_id, tier="high")
+            ex_m = json.loads(hd_m["x-goog-ext-525001261-jspb"])
+            assert "Cookie" not in hd_m
+            assert len(ex_m) == 28, f"Expected 28-elem header, got {len(ex_m)}"
+            assert in_m[17] == [[2]] and in_m[32] == 1 and in_m[79] == exp_mode and in_m[80] == 2
+            assert ex_m[14] == exp_mode and ex_m[4] == exp_hex and len(ex_m[8]) == 10
 
-        # When mode=8 is marked downgraded on non-Ultra accounts, `gemini-app-carbon` & `gemini-app-thinking` route directly to `4 Hydrogen High` (`(1, 2)`) — NEVER retired `3.1 Pro`!
-        pcache_nov.mark_mode_downgraded(8)
-        freq_h = json.loads(build_stream_generate_freq("hi", turn_index=0, model_id="gemini-app-carbon", tier="high", proto_cache=pcache_nov))
-        inner_h = json.loads(freq_h[1])
-        ext_h = json.loads(pcache_nov.resolve_extra_headers("gemini-app-carbon", tier="high")["x-goog-ext-525001261-jspb"])
-        assert inner_h[79] == 1 and inner_h[80] == 2 and ext_h[14] == 1 and ext_h[15] == 2 and ext_h[4] == "56fdd199312815e2"
-
-        # Verify v4.4 THINK_WIRE semantics (`low=1`, `medium=4`, `high=2`, `xhigh=2`) in both f.req[80] and ext[15]
-        for tier_name, exp_wire in (("low", 1), ("medium", 4), ("high", 2), ("xhigh", 2)):
-            fr_t = json.loads(build_stream_generate_freq("hi", turn_index=0, model_id="gemini-app-thinking", tier=tier_name, proto_cache=pcache_nov))
+        # Verify open THINK_WIRE semantics (`disabled/low=1`, `medium=4`, `high/xhigh/max=2`) on gemini-4-neon
+        for tier_name, exp_wire in (("disabled", 1), ("low", 1), ("medium", 4), ("high", 2), ("xhigh", 2), ("max", 2)):
+            fr_t = json.loads(build_stream_generate_freq("hi", turn_index=0, model_id="gemini-4-neon", tier=tier_name, proto_cache=pcache_nov))
             in_t = json.loads(fr_t[1])
-            ex_t = json.loads(pcache_nov.resolve_extra_headers("gemini-app-thinking", tier=tier_name)["x-goog-ext-525001261-jspb"])
+            ex_t = json.loads(pcache_nov.resolve_extra_headers("gemini-4-neon", tier=tier_name)["x-goog-ext-525001261-jspb"])
             assert in_t[80] == exp_wire and ex_t[15] == exp_wire, f"{tier_name}: {in_t[80]} / {ex_t[15]}"
 
         # Verify v4.4 clean text preservation (no "Claude" -> "the assistant" / "Anthropic" -> "the provider" corruption)
@@ -830,16 +828,21 @@ def stage_protocol_e2e() -> dict:
     try:
         code_h, _, _ = client.request("HEAD", "/api/hello")
         assert code_h == 200
+        # Pure-API v5.0: strict HTTP 400 for unknown/non-native model IDs + 100% real pass-through (no fake fast_path)
+        c_unk, _, raw_unk = client.request(
+            "POST",
+            "/v1/messages",
+            {"model": "claude-opus-4-6", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert c_unk == 400 and "Unknown model" in raw_unk, f"Expected 400 for unknown model, got {c_unk}: {raw_unk}"
         reqs_before = len(peer.requests_log)
-        for fp_msg, max_t in [("ping", 1), ("Generate isNewTopic JSON", 128)]:
-            c_fp, h_fp, _ = client.request(
-                "POST",
-                "/v1/messages",
-                {"model": "gemini-app-fast", "max_tokens": max_t, "messages": [{"role": "user", "content": fp_msg}]},
-                {"User-Agent": "claude-cli/2.1.325"},
-            )
-            assert c_fp == 200 and h_fp.get("x-turn-mode") == "fast_path"
-        assert len(peer.requests_log) == reqs_before
+        c_pt, h_pt, _ = client.request(
+            "POST",
+            "/v1/messages",
+            {"model": "gemini-4-neon", "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]},
+            {"User-Agent": "claude-cli/2.1.325"},
+        )
+        assert c_pt == 200 and h_pt.get("x-turn-mode") != "fast_path" and len(peer.requests_log) == reqs_before + 1
 
         host_tools = [
             {"name": "Read", "description": "Read file", "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}}},
@@ -852,7 +855,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": True,
                 "max_tokens": 4096,
                 "tools": host_tools,
@@ -867,7 +870,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-thinking",
+                "model": "gemini-4-neon",
                 "stream": False,
                 "tools": host_tools,
                 "messages": [{"role": "user", "content": "SCENARIO_MIXED_AB"}],
@@ -884,7 +887,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-thinking",
+                "model": "gemini-4-neon",
                 "stream": False,
                 "tools": host_tools,
                 "messages": [
@@ -905,7 +908,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-fast",
+                "model": "gemini-3.5-flash-lite",
                 "stream": False,
                 "tools": host_tools,
                 "messages": [
@@ -926,7 +929,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "Turn 1"},
@@ -940,7 +943,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "Turn 1"},
@@ -961,7 +964,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "Turn 1"},
@@ -984,7 +987,7 @@ def stage_protocol_e2e() -> dict:
         c_g1, _, raw_g1 = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-carbon", "stream": False, "tools": host_tools, "messages": [{"role": "user", "content": "Test mismatch guard"}]},
+            {"model": "gemini-4-carbon", "stream": False, "tools": host_tools, "messages": [{"role": "user", "content": "Test mismatch guard"}]},
             {"x-claude-code-session-id": "sess-acct-guard"},
         )
         err_g1 = json.loads(raw_g1)
@@ -995,7 +998,7 @@ def stage_protocol_e2e() -> dict:
         c_es, _, raw_es = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-carbon", "stream": False, "tools": host_tools, "messages": [{"role": "user", "content": "SCENARIO_EARLY_STOP"}]},
+            {"model": "gemini-4-carbon", "stream": False, "tools": host_tools, "messages": [{"role": "user", "content": "SCENARIO_EARLY_STOP"}]},
             {"x-claude-code-session-id": "sess-early-stop"},
         )
         msg_es = json.loads(raw_es)
@@ -1009,7 +1012,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": True,
                 "system": f"Primary working directory: {PROJECT_DIR}",
                 "tools": host_tools,
@@ -1044,7 +1047,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": True,
                 "tools": host_tools,
                 "messages": [{"role": "user", "content": "SCENARIO_MALFORMED_SELF_HEAL"}],
@@ -1058,12 +1061,12 @@ def stage_protocol_e2e() -> dict:
         assert "Recovered after self-heal" in sse_sh
 
         # 9. v4.4 API Compliance: 400 Validation, stop_sequences, thinking.disabled, tool_choice, OpenAI Chat/Responses, Cancel
-        c_bad_empty, _, _ = client.request("POST", "/v1/messages", {"model": "gemini-app-carbon", "messages": []})
+        c_bad_empty, _, _ = client.request("POST", "/v1/messages", {"model": "gemini-4-carbon", "messages": []})
         assert c_bad_empty == 400
         c_bad_mm, _, _ = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-carbon", "messages": [{"role": "user", "content": [{"type": "image", "source": {}}]}]},
+            {"model": "gemini-4-carbon", "messages": [{"role": "user", "content": [{"type": "image", "source": {}}]}]},
         )
         assert c_bad_mm == 400
 
@@ -1071,7 +1074,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "stop_sequences": ["STOP_HERE"],
                 "messages": [{"role": "user", "content": "SCENARIO_STOP_SEQ"}],
@@ -1086,7 +1089,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "thinking": {"type": "disabled"},
                 "messages": [{"role": "user", "content": "SCENARIO_THINK_DISABLED"}],
@@ -1101,7 +1104,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "tools": host_tools,
                 "tool_choice": {"type": "tool", "name": "Read"},
@@ -1119,7 +1122,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/chat/completions",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": True,
                 "stream_options": {"include_usage": True},
                 "tools": oai_tools,
@@ -1132,7 +1135,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/chat/completions",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "tools": oai_tools,
                 "messages": [
@@ -1149,7 +1152,7 @@ def stage_protocol_e2e() -> dict:
         c_resp, _, sse_resp = client.request(
             "POST",
             "/v1/responses",
-            {"model": "gemini-app-fast", "stream": True, "input": "Hello responses API"},
+            {"model": "gemini-3.5-flash-lite", "stream": True, "input": "Hello responses API"},
             {"x-claude-code-session-id": "sess-oai-resp"},
         )
         assert c_resp == 200 and "response.output_text.delta" in sse_resp and "response.completed" in sse_resp
@@ -1159,7 +1162,7 @@ def stage_protocol_e2e() -> dict:
         srv_dummy = type("DummyServer", (), {"server_name": "localhost", "server_port": 18896})()
         t_can = threading.Thread(target=gw.GatewayHTTPHandler, args=(s_sock_can, ("127.0.0.1", 0), srv_dummy), daemon=True)
         t_can.start()
-        can_payload = json.dumps({"model": "gemini-app-carbon", "stream": True, "messages": [{"role": "user", "content": "SCENARIO_CANCEL_STREAM"}]}).encode("utf-8")
+        can_payload = json.dumps({"model": "gemini-4-carbon", "stream": True, "messages": [{"role": "user", "content": "SCENARIO_CANCEL_STREAM"}]}).encode("utf-8")
         c_sock_can.sendall(
             f"POST /v1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nX-Claude-Code-Session-Id: sess-cancel\r\nContent-Length: {len(can_payload)}\r\n\r\n".encode("utf-8") + can_payload
         )
@@ -1186,7 +1189,7 @@ def stage_protocol_e2e() -> dict:
         c_sock_ns, s_sock_ns = socket.socketpair()
         t_ns = threading.Thread(target=gw.GatewayHTTPHandler, args=(s_sock_ns, ("127.0.0.1", 0), srv_dummy), daemon=True)
         t_ns.start()
-        ns_can_payload = json.dumps({"model": "gemini-app-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_CANCEL_STREAM"}]}).encode("utf-8")
+        ns_can_payload = json.dumps({"model": "gemini-4-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_CANCEL_STREAM"}]}).encode("utf-8")
         c_sock_ns.sendall(
             f"POST /v1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nX-Claude-Code-Session-Id: sess-cancel-ns\r\nContent-Length: {len(ns_can_payload)}\r\n\r\n".encode("utf-8") + ns_can_payload
         )
@@ -1207,7 +1210,7 @@ def stage_protocol_e2e() -> dict:
         c_sr1, _, raw_sr1 = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-thinking", "stream": False, "messages": [{"role": "user", "content": "<system-reminder>t=1</system-reminder>\nHello CLI"}]},
+            {"model": "gemini-4-neon", "stream": False, "messages": [{"role": "user", "content": "<system-reminder>t=1</system-reminder>\nHello CLI"}]},
             {"User-Agent": "claude-cli/2.1.325", "x-claude-code-session-id": "sess-sr-sticky"},
         )
         assert c_sr1 == 200
@@ -1216,7 +1219,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-thinking",
+                "model": "gemini-4-neon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "<system-reminder>t=2 CHANGED</system-reminder>\nHello CLI"},
@@ -1233,7 +1236,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-thinking",
+                "model": "gemini-4-neon",
                 "stream": False,
                 "tools": host_tools,
                 "messages": [
@@ -1249,7 +1252,7 @@ def stage_protocol_e2e() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-thinking",
+                "model": "gemini-4-neon",
                 "stream": False,
                 "tools": host_tools,
                 "messages": [
@@ -1264,7 +1267,7 @@ def stage_protocol_e2e() -> dict:
         assert c_ce2 == 200 and h_ce2.get("x-turn-mode") == "sticky_delta", f"Trailing system shift broke sticky_delta: {h_ce2}"
 
         return {
-            "zero_quota_fast_paths": "PASS (0 upstream calls)",
+            "pure_api_strict_400_and_real_passthrough": "PASS (strict 400 + real upstream pass-through)",
             "pure_layer_b_short_circuit": "PASS",
             "mixed_layer_ab_stitching": "PASS",
             "lossless_48k_pagination": "PASS",
@@ -1333,7 +1336,7 @@ def stage_torture_soak_matrix() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "SCENARIO_WARMING_UP_RETRY"},
@@ -1353,7 +1356,7 @@ def stage_torture_soak_matrix() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "SCENARIO_WARMING_UP_RETRY"},
@@ -1373,7 +1376,7 @@ def stage_torture_soak_matrix() -> dict:
         c_eof, _, raw_eof = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-fast", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_PREMATURE_EOF"}]},
+            {"model": "gemini-3.5-flash-lite", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_PREMATURE_EOF"}]},
             {"x-claude-code-session-id": "sess-premature-eof"},
         )
         assert c_eof == 503 and "BRIDGE_PREMATURE_EOF" in raw_eof
@@ -1386,7 +1389,7 @@ def stage_torture_soak_matrix() -> dict:
             c_st, _, raw_st = client.request(
                 "POST",
                 "/v1/messages",
-                {"model": "gemini-app-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_CARBON_TIMEOUT_STEPDOWN"}]},
+                {"model": "gemini-4-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_CARBON_TIMEOUT_STEPDOWN"}]},
                 {"x-claude-code-session-id": "sess-carbon-stepdown"},
             )
         finally:
@@ -1397,53 +1400,50 @@ def stage_torture_soak_matrix() -> dict:
         assert len(st_reqs) == 2 and st_reqs[0]["slot_79"] == 8 and st_reqs[0]["slot_80"] == 2
         assert st_reqs[1]["slot_79"] == 8 and st_reqs[1]["slot_80"] == 2
 
-        # 4. Pre-First-Delta Strict Downgrade Reroute (`meta: "3.5 Flash-Lite"` on `mode=8` aborts immediately & reroutes SAME request to `4 Hydrogen High` `mode=1, ThinkWire=2`!)
+        # 4. Pure-API v5.0: Upstream `Flash-Lite` hijack retries EXACT SAME model 1x (never cross-routes) then returns explicit 503!
         reqs_before_dg = len(peer.requests_log)
-        c_dg1, h_dg1, raw_dg1 = client.request(
+        c_dg1, _, raw_dg1 = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_DOWNGRADE_GUARD"}]},
+            {"model": "gemini-4-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_DOWNGRADE_GUARD"}]},
             {"x-claude-code-session-id": "sess-dg-live"},
         )
-        assert c_dg1 == 200
-        dg_reqs = peer.requests_log[reqs_before_dg:]
-        assert len(dg_reqs) == 2 and dg_reqs[0]["slot_79"] == 8 and dg_reqs[1]["slot_79"] == 1 and dg_reqs[1]["slot_80"] == 2
+        assert c_dg1 == 503 and "UPSTREAM_MODEL_HIJACK" in raw_dg1, f"Expected 503 hijack error, got {c_dg1}: {raw_dg1}"
         assert "FLASH_LITE_DOWNGRADED_TEXT_MUST_BE_ABORTED" not in raw_dg1
-        msg_dg1 = json.loads(raw_dg1)
-        thk_dg1 = "".join(b.get("thinking", "") for b in msg_dg1["content"] if b["type"] == "thinking")
-        txt_dg1 = "".join(b.get("text", "") for b in msg_dg1["content"] if b["type"] == "text")
-        assert "4 Hydrogen High" in thk_dg1 and "无缝接管完成" in txt_dg1
-        assert "+rerouted(m1w2)" in h_dg1.get("x-stream-mode", "")
+        dg_reqs = peer.requests_log[reqs_before_dg:]
+        assert len(dg_reqs) == 2 and dg_reqs[0]["slot_79"] == 8 and dg_reqs[1]["slot_79"] == 8, f"Must stay pinned to mode=8: {dg_reqs}"
 
-        # Subsequent request goes straight to `4 Hydrogen High` `(1, 2)` without wasting a `mode=8` probe during cooldown
-        c_dg2, _, _ = client.request(
-            "POST",
-            "/v1/messages",
-            {"model": "gemini-app-carbon", "stream": False, "messages": [{"role": "user", "content": "Followup after cooldown"}]},
-            {"x-claude-code-session-id": "sess-dg-followup"},
-        )
-        assert c_dg2 == 200 and peer.requests_log[-1]["slot_79"] == 1 and peer.requests_log[-1]["slot_80"] == 2
-
-        # 5. v4.5 Resilience: `HTTP_429 [1095]` Multi-Attempt Retry + `Carbon` -> `4 Hydrogen High (1, 2)` Same-Turn Step-Down
-        mock_plane.proto_cache.mark_mode_downgraded(8, cooldown_sec=0.0)
-        peer.http_429_remaining = 2
+        # 5. Pure-API v5.0: `HTTP_429 [1095]` retries EXACT SAME model 1x then recovers OR returns explicit HTTP 429 (never cross-routes)!
+        peer.http_429_remaining = 1
         reqs_before_429 = len(peer.requests_log)
-        c_429, h_429, raw_429 = client.request(
+        c_429_ok, _, raw_429_ok = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_429_CARBON_STEPDOWN"}]},
-            {"x-claude-code-session-id": "sess-429-stepdown"},
+            {"model": "gemini-4-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_429_CARBON_STEPDOWN"}]},
+            {"x-claude-code-session-id": "sess-429-retry-ok"},
         )
-        assert c_429 == 200 and "429_STEPDOWN_RECOVERED_OK(m1w2)" in raw_429, f"429 stepdown failed: {c_429} {raw_429}"
-        reqs_429 = peer.requests_log[reqs_before_429:]
-        assert len(reqs_429) == 3 and reqs_429[0]["slot_79"] == 8 and reqs_429[-1]["slot_79"] == 1 and reqs_429[-1]["slot_80"] == 2
+        assert c_429_ok == 200 and "429_STEPDOWN_RECOVERED_OK(m8w2)" in raw_429_ok
+        reqs_429_ok = peer.requests_log[reqs_before_429:]
+        assert len(reqs_429_ok) == 2 and all(r["slot_79"] == 8 for r in reqs_429_ok)
+
+        peer.http_429_remaining = 3
+        reqs_before_429_fail = len(peer.requests_log)
+        c_429_fail, _, raw_429_fail = client.request(
+            "POST",
+            "/v1/messages",
+            {"model": "gemini-4-carbon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_429_CARBON_STEPDOWN"}]},
+            {"x-claude-code-session-id": "sess-429-retry-fail"},
+        )
+        assert c_429_fail == 429, f"Expected explicit HTTP 429 after 1x same-model retry, got {c_429_fail}: {raw_429_fail}"
+        reqs_429_fail = peer.requests_log[reqs_before_429_fail:]
+        assert len(reqs_429_fail) == 2 and all(r["slot_79"] == 8 for r in reqs_429_fail)
 
         # 6. v4.5 Resilience: `FIRST_TOKEN_TIMEOUT` (BOQ Heartbeat Stall) Auto-Retry Recovery
         peer.first_token_timeout_once = True
         c_ftt, _, raw_ftt = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-thinking", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_FIRST_TOKEN_TIMEOUT"}]},
+            {"model": "gemini-4-neon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_FIRST_TOKEN_TIMEOUT"}]},
             {"x-claude-code-session-id": "sess-ftt-retry"},
         )
         assert c_ftt == 200 and "FIRST_TOKEN_TIMEOUT_RECOVERED_OK" in raw_ftt
@@ -1453,7 +1453,7 @@ def stage_torture_soak_matrix() -> dict:
         c_ck1, _, raw_ck1 = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-thinking", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_CKPT_TURN1"}]},
+            {"model": "gemini-4-neon", "stream": False, "messages": [{"role": "user", "content": "SCENARIO_CKPT_TURN1"}]},
             {"x-claude-code-session-id": "sess-ckpt-rewind"},
         )
         assert c_ck1 == 200 and "CKPT_TURN1_OK" in raw_ck1
@@ -1461,7 +1461,7 @@ def stage_torture_soak_matrix() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-thinking",
+                "model": "gemini-4-neon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "SCENARIO_CKPT_TURN1"},
@@ -1476,7 +1476,7 @@ def stage_torture_soak_matrix() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-thinking",
+                "model": "gemini-4-neon",
                 "stream": False,
                 "messages": [
                     {"role": "user", "content": "SCENARIO_CKPT_TURN1"},
@@ -1500,7 +1500,7 @@ def stage_torture_soak_matrix() -> dict:
         c_sb1, _, raw_sb1 = client.request(
             "POST",
             "/v1/messages",
-            {"model": "gemini-app-carbon", "stream": False, "tools": sb_tools, "messages": [{"role": "user", "content": "Build animation"}]},
+            {"model": "gemini-4-carbon", "stream": False, "tools": sb_tools, "messages": [{"role": "user", "content": "Build animation"}]},
             {"User-Agent": "claude-cli/2.1.325", "x-claude-code-session-id": "sess-sideband-guard"},
         )
         assert c_sb1 == 200
@@ -1511,7 +1511,7 @@ def stage_torture_soak_matrix() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "messages": [{"role": "user", "content": "Evaluate command `open demo.html`. Reply <block>yes</block> or <block>no</block>."}],
             },
@@ -1524,7 +1524,7 @@ def stage_torture_soak_matrix() -> dict:
             "POST",
             "/v1/messages",
             {
-                "model": "gemini-app-carbon",
+                "model": "gemini-4-carbon",
                 "stream": False,
                 "tools": sb_tools,
                 "messages": [
@@ -1580,6 +1580,8 @@ def stage_live_smoke_gate() -> dict:
     assert health.get("ok") is True
     assert health.get("version") == TARGET_VERSION
     assert health.get("acp_spawned") is False
+    for t_item in (health.get("telemetry") or []):
+        assert "text" not in t_item and "thinking" not in t_item and "tool_calls" not in t_item, f"Plaintext leaked in telemetry: {t_item.keys()}"
 
     c_r, _, raw_r = client.request("GET", "/readyz")
     assert c_r == 200 and json.loads(raw_r).get("version") == TARGET_VERSION
@@ -1587,15 +1589,15 @@ def stage_live_smoke_gate() -> dict:
     c_m, _, raw_m = client.request("GET", "/v1/models")
     assert c_m == 200
     model_ids = [m["id"] for m in json.loads(raw_m).get("data", [])]
-    assert model_ids == ["gemini-app-carbon", "gemini-app-thinking", "gemini-app-fast"]
+    assert model_ids == ["gemini-4-neon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-4-argon", "gemini-3.5-flash-lite"]
 
-    c_m1, _, _ = client.request("GET", "/v1/models/gemini-app-carbon")
+    c_m1, _, _ = client.request("GET", "/v1/models/gemini-4-neon")
     assert c_m1 == 200
     c_m404, _, _ = client.request("GET", "/v1/models/nonexistent-model-xyz")
     assert c_m404 == 404
 
     c_d, _, dash_html = client.request("GET", "/dashboard")
-    assert c_d == 200 and "Dual-Plane v4.6" in dash_html
+    assert c_d == 200 and "Dual-Plane v5.0" in dash_html
 
     fifo_dir = f"/tmp/dsh_smoke_fifo_{os.getpid()}"
     stop_ev = threading.Event()

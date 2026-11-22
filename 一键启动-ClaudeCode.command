@@ -10,7 +10,7 @@ done
 export PATH
 export NO_PROXY="127.0.0.1,localhost,::1"
 export no_proxy="127.0.0.1,localhost,::1"
-unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT 2>/dev/null || true
+unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_EFFORT_LEVEL 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${DSH_GATEWAY_PORT:-18896}"
@@ -40,7 +40,7 @@ fi
 
 # Management subcommands pass straight through to cc-demo.sh without interactive launch banner.
 case "${1:-}" in
-  start|daemon|stop|restart|status|logs|login|switch-account|pin-account|workflow|clean-chats)
+  start|daemon|stop|restart|status|logs|login|switch-account|pin-account|workflow|clean-chats|app-mode|task-mode|probe)
     cd "${SCRIPT_DIR}"
     exec "${SCRIPT_DIR}/cc-demo.sh" "$@"
     ;;
@@ -58,7 +58,7 @@ for _arg in "$@"; do
 done
 
 echo "[一键启动] 工作目录: ${TARGET_DIR}"
-echo "[一键启动] 正在检查 Dual-Plane v4.6 本地网关与满血 Carbon / Task 通道..."
+echo "[一键启动] 正在检查 Dual-Plane v5.0 Pure-API 本地网关 (主模型 gemini-4-neon)..."
 
 # Ensure gateway + WebKit bridge are running and up-to-date.
 "${SCRIPT_DIR}/cc-demo.sh" start >/dev/null

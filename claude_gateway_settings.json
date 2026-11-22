@@ -1,25 +1,35 @@
 {
-  "model": "gemini-app-carbon",
+  "model": "gemini-4-neon",
   "alwaysThinkingEnabled": true,
   "showThinkingSummaries": true,
-  "effortLevel": "high",
+  "effortLevel": "xhigh",
   "modelPicker": {
     "replaceBuiltInOptions": true,
     "options": [
       {
-        "model": "gemini-app-carbon",
-        "label": "Gemini Carbon (4 Carbon 深度思考 High · 推荐默认 · 满血旗舰)",
-        "description": "满血 4 Carbon Deep Think High · 防超时降智 · 自动无痕清理侧边栏会话"
+        "model": "gemini-4-neon",
+        "label": "Gemini 4 Neon (主模型 · 纯 API 严格锁定 · 开放思考档位)",
+        "description": "原生 gemini-4-neon (mode=3) · 零自动路由 · 支持 /effort 自由调节思考强度"
       },
       {
-        "model": "gemini-app-thinking",
-        "label": "Gemini Thinking (4 Hydrogen High · 快速显式思考)",
-        "description": "4 Hydrogen High · 10s 级快速显式思考与工具调用 · 适合日常中轻量改动"
+        "model": "gemini-4-carbon",
+        "label": "Gemini 4 Carbon (旗舰深度思考 · 纯 API 严格锁定)",
+        "description": "原生 gemini-4-carbon (mode=8) · 零自动降级 · 适合超复杂架构与根因定位"
       },
       {
-        "model": "gemini-app-fast",
-        "label": "Gemini Fast (4 Hydrogen Low · 极速响应)",
-        "description": "低延迟检索、旁路审查与子代理专用"
+        "model": "gemini-4-hydrogen",
+        "label": "Gemini 4 Hydrogen (高速显式思考 · 纯 API 严格锁定)",
+        "description": "原生 gemini-4-hydrogen (mode=1) · 10s 级显式思考与高频工具循环"
+      },
+      {
+        "model": "gemini-4-argon",
+        "label": "Gemini 4 Argon (mode=8 原生模型 · 纯 API 严格锁定)",
+        "description": "原生 gemini-4-argon (hex=1bc6b5d98741cd3d) · 显式指定直连"
+      },
+      {
+        "model": "gemini-3.5-flash-lite",
+        "label": "Gemini 3.5 Flash-Lite (极速低延迟 · 纯 API 严格锁定)",
+        "description": "原生 gemini-3.5-flash-lite (mode=6) · 极速轻量响应"
       }
     ]
   }

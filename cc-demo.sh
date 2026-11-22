@@ -32,38 +32,47 @@ rotate_log_if_large() {
 
 build_runtime_settings() {
   /usr/bin/python3 - "${DIR}/claude_gateway_settings.json" "${RUNTIME_SETTINGS}" "${PORT}" <<'PY'
-import json, sys
+import json, os, sys
 src, dst, port = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(src, "r", encoding="utf-8") as fp:
     cfg = json.load(fp)
+primary = os.environ.get("DSH_PRIMARY_MODEL", cfg.get("model") or "gemini-4-neon")
+subagent = os.environ.get("DSH_SUBAGENT_MODEL", primary)
+haiku = os.environ.get("DSH_HAIKU_MODEL", "gemini-4-hydrogen")
+cfg["model"] = primary
 cfg["alwaysThinkingEnabled"] = True
 cfg["showThinkingSummaries"] = True
-cfg["effortLevel"] = "high"
+cfg["effortLevel"] = os.environ.get("DSH_DEFAULT_EFFORT", cfg.get("effortLevel") or "xhigh")
 env_blk = cfg.setdefault("env", {})
 env_blk["NO_PROXY"] = "127.0.0.1,localhost,::1"
 env_blk["no_proxy"] = "127.0.0.1,localhost,::1"
 env_blk["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
 env_blk["ANTHROPIC_ + AUTH_TOKEN".replace(" + ", "")] = "dsh-local-gateway"
-env_blk["ANTHROPIC_MODEL"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_MODEL"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_OPUS_MODEL"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_SONNET_MODEL"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_FABLE_MODEL"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] = "gemini-app-carbon"
-env_blk["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = "gemini-app-fast"
-env_blk["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"] = "gemini-app-fast"
-env_blk["CLAUDE_CODE_SUBAGENT_MODEL"] = "gemini-app-fast"
+env_blk["ANTHROPIC_MODEL"] = primary
+env_blk["ANTHROPIC_DEFAULT_MODEL"] = primary
+env_blk["ANTHROPIC_DEFAULT_OPUS_MODEL"] = primary
+env_blk["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"] = primary
+env_blk["ANTHROPIC_DEFAULT_SONNET_MODEL"] = primary
+env_blk["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"] = primary
+env_blk["ANTHROPIC_DEFAULT_FABLE_MODEL"] = primary
+env_blk["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] = primary
+env_blk["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = haiku
+env_blk["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"] = haiku
+env_blk["CLAUDE_CODE_SUBAGENT_MODEL"] = subagent
 env_blk["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "256000"
-env_blk["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
+env_blk["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = "64000"
+env_blk["BASH_MAX_OUTPUT_LENGTH"] = "150000"
+env_blk["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "0"
 env_blk["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
 env_blk["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1"
+env_blk["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
 env_blk["CLAUDE_CODE_ALWAYS_ENABLE_EFFORT"] = "1"
-env_blk["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
+env_blk.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
 env_blk["CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"] = "1"
-env_blk["API_TIMEOUT_MS"] = "600000"
+env_blk["API_TIMEOUT_MS"] = "1200000"
 env_blk["API_FORCE_IDLE_TIMEOUT"] = "0"
+env_blk["CLAUDE_STREAM_IDLE_TIMEOUT_MS"] = "1200000"
+env_blk["CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS"] = "1200000"
 with open(dst, "w", encoding="utf-8") as fp:
     json.dump(cfg, fp, indent=2, ensure_ascii=False)
 PY
@@ -153,7 +162,7 @@ opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 with opener.open(f"http://127.0.0.1:{port}/health", timeout=1.2) as r:
     d = json.loads(r.read().decode("utf-8"))
 
-if d.get("version") != "4.6.0-clean-carbon":
+if d.get("version") != "5.0.0-pure-api":
     sys.exit(1)
 if str(d.get("upstream", "")) != expected_up:
     sys.exit(1)
@@ -209,7 +218,7 @@ start_gateway() {
     if gateway_matches_runtime; then
       return 0
     fi
-    echo "[cc-demo] 检测到旧版网关或文件变更占用 ${PORT}，正在热切换为 Dual-Plane v4.6 Clean-Carbon 网关..."
+    echo "[cc-demo] 检测到旧版网关或文件变更占用 ${PORT}，正在热切换为 Dual-Plane v5.0 Pure-API 网关..."
     stop_gateway
   fi
   local disable_p1="0"
@@ -266,21 +275,26 @@ case "${CMD}" in
     ;;
   start|daemon)
     start_gateway
-    echo "[cc-demo] Dual-Plane v4.6 Clean-Carbon 网关后台已就绪: http://127.0.0.1:${PORT}"
+    echo "[cc-demo] Dual-Plane v5.0 Pure-API 网关后台已就绪: http://127.0.0.1:${PORT}"
     show_status
     exit 0
     ;;
   restart)
     stop_gateway
     start_gateway
-    echo "[cc-demo] Dual-Plane v4.6 Clean-Carbon 网关已重启: http://127.0.0.1:${PORT}"
+    echo "[cc-demo] Dual-Plane v5.0 Pure-API 网关已重启: http://127.0.0.1:${PORT}"
     show_status
     exit 0
+    ;;
+  probe)
+    shift || true
+    start_gateway
+    exec /usr/bin/python3 -u "${DIR}/probe_live_models_and_task.py" "$@"
     ;;
   app-mode|task-mode)
     shift || true
     UPSTREAM="mcp_task"
-    TASK_CMD="请在当前 Gemini.app Task 或 Antigravity 会话中执行常驻守护值守命令（RequiresNetworkAccess=false）：/usr/bin/python3 /tmp/dsh_worker_cli.py daemon --ipc-dir ${IPC_DIR} --model gemini-app-carbon --max-idle 1800"
+    TASK_CMD="请在当前 Gemini.app Task 或 Antigravity 会话中执行常驻守护值守命令（RequiresNetworkAccess=false）：/usr/bin/python3 /tmp/dsh_worker_cli.py daemon --ipc-dir ${IPC_DIR} --model gemini-4-neon --max-idle 1800"
     printf '%s' "${TASK_CMD}" | pbcopy 2>/dev/null || true
     echo "=================================================================="
     echo " [Plane 2 接管] 已自动复制 Gemini.app 常驻守护口令到剪贴板！"
@@ -376,12 +390,12 @@ PY
 IFS='|' read -r P1_READY P2_WORKERS MCP_COUNT P1_ACCT PINNED_ACCT <<< "${STATUS_LINE}"
 
 echo "=================================================================="
-echo " Gemini.app x Claude Code 已启动 (Dual-Plane v4.6 · 默认满血 4 Carbon High + 网页会话自动无痕清理)"
+echo " Gemini.app x Claude Code 已启动 (Dual-Plane v5.0 Pure-API · 主模型 ${DSH_PRIMARY_MODEL:-gemini-4-neon} · 开放 /effort 调节)"
 echo "  • 本地网关地址  : http://127.0.0.1:${PORT} (免公网双轨 MCP: ${MCP_COUNT} 个)"
 if [[ "${UPSTREAM}" == "mcp_task" || "${P2_WORKERS}" -gt 0 ]]; then
-  echo "  • 当前会话通道  : Gemini.app 前台单会话守护接管 (Plane 2 在线: ${P2_WORKERS} · Task 复用单条 / Antigravity 零 Web 记录)"
+  echo "  • 当前会话通道  : Gemini.app 前台单会话守护接管 (Plane 2 在线: ${P2_WORKERS} · Task 复用单条)"
 elif [[ "${P1_READY}" == "1" ]]; then
-  echo "  • 当前会话通道  : Plane 1 满血 4 Carbon 常驻 · 账号: ${P1_ACCT:-已验证} (旁路隔离 + 自动删旧会话)"
+  echo "  • 当前会话通道  : Plane 1 纯 API 严格锁定 · 账号: ${P1_ACCT:-已验证} (零自动路由 + 自动删旧会话)"
   if [[ -n "${PINNED_ACCT}" ]]; then
     echo "  • 账号防串号锁  : 已锁定对齐 ${PINNED_ACCT}"
   fi
@@ -389,7 +403,7 @@ else
   echo "  • 当前会话通道  : 未强行弹窗 (运行 ./cc-demo.sh task-mode 接管 App，或 ./cc-demo.sh login 绑定网页)"
 fi
 echo "  • 实时监控面板  : http://127.0.0.1:${PORT}/dashboard (支持一键清理残留网页会话)"
-echo "  • 切换前台接管  : 运行 ./cc-demo.sh task-mode 可复制守护口令接管 Gemini.app Task / Antigravity"
+echo "  • 全模型深度探测: 运行 ./cc-demo.sh probe --smoke 探测当前账号全部模型与思考档位"
 echo "=================================================================="
 
 export ANTHROPIC_BASE_URL="http://127.0.0.1:${PORT}"
@@ -397,25 +411,6 @@ AUTH_ENV_NAME="ANTHROPIC_""AUTH_TOKEN"
 if [[ -z "${!AUTH_ENV_NAME:-}" ]]; then
   export "${AUTH_ENV_NAME}=dsh-local-gateway"
 fi
-export ANTHROPIC_MODEL="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_MODEL="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_OPUS_MODEL_NAME="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_SONNET_MODEL_NAME="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_FABLE_MODEL="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_FABLE_MODEL_NAME="gemini-app-carbon"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="gemini-app-fast"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME="gemini-app-fast"
-export CLAUDE_CODE_SUBAGENT_MODEL="gemini-app-fast"
-export CLAUDE_CODE_AUTO_COMPACT_WINDOW="256000"
-export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY="1"
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
-export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS="1"
-export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT="1"
-export CLAUDE_CODE_EFFORT_LEVEL="high"
-export CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR="1"
-export API_TIMEOUT_MS="600000"
-export API_FORCE_IDLE_TIMEOUT="0"
+unset CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_CHILD_SESSION 2>/dev/null || true
 
 exec "${CLAUDE_BIN}" --settings "${RUNTIME_SETTINGS}" --autocompact 256k "$@"

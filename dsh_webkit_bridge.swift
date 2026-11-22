@@ -11,7 +11,7 @@ import WebKit
 // - Deep-Think 9-minute semantic watchdog (`firstWrbTimeoutMs` + `idleTimeoutMs` up to 540s) + native `batchexecute` (`GzXR5e`) auto-cleanup
 // - Background drain-to-commit (`background_drain`), worker-slot visibility/spellcheck hardening, and `wizHydrated` readiness gating
 
-let BRIDGE_VERSION = "4.6.0-clean-carbon"
+let BRIDGE_VERSION = "5.0.0-pure-api"
 let SAFARI_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15"
 let GEMINI_APP_URL = "https://gemini.google.com/app"
 
@@ -355,7 +355,22 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
       }
       if (chunks.length > 0) return chunks.join("\\n\\n");
     }
-    return "";
+    var fallback = [];
+    function collect(node, depth) {
+      if (depth > 6 || node === null || node === undefined) return;
+      if (typeof node === "string") {
+        var s = node.trim();
+        if (s.length >= 2 && s.indexOf("http") !== 0 && !/^[0-9a-fA-F_-]{8,}$/.test(s)) {
+          fallback.push(node);
+        }
+        return;
+      }
+      if (Array.isArray(node)) {
+        for (var j = 0; j < node.length; j++) collect(node[j], depth + 1);
+      }
+    }
+    collect(c37, 0);
+    return fallback.length > 0 ? fallback.join("\\n\\n") : "";
   }
 
   function stripCtrl94AndExtractThoughts(rawText, allowTailHold) {
@@ -602,7 +617,7 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
         var candLabels = [part.length > 42 ? part[42] : null, part.length >= 2 ? part[part.length - 2] : null];
         for (var li = 0; li < candLabels.length; li++) {
           var lbl = candLabels[li];
-          if (typeof lbl === "string" && /(Argon|Pro|Flash|Hydrogen|Carbon|Gemini)/i.test(lbl) && lbl.length < 64) {
+          if (typeof lbl === "string" && /(Argon|Pro|Flash|Hydrogen|Carbon|Neon|Gemini)/i.test(lbl) && lbl.length < 64) {
             if (lbl !== routedModel) {
               routedModel = lbl;
               dshPost({reqId: reqId, event: "meta", routed_model: routedModel});
@@ -859,6 +874,7 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
       var KNOWN_MODEL_BY_HEX = {
         "95a4c0abcba24364": {label: "Carbon", mode: 8},
         "1bc6b5d98741cd3d": {label: "4 Argon", mode: 8},
+        "797f3d0293f288ad": {label: "4 Neon", mode: 3},
         "e6fa609c3fa255c0": {label: "3.1 Pro", mode: 3},
         "56fdd199312815e2": {label: "4 Hydrogen", mode: 1},
         "1d44b34bcaa1c04d": {label: "Flash-Lite", mode: 6}
@@ -880,7 +896,7 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
         if (node.length >= 2 && typeof node[0] === "string") {
           var id0 = node[0];
           var idLow = id0.toLowerCase();
-          if (hexRe.test(id0) || id0 === "argon" || id0 === "Argon4p0" || id0 === "carbon") {
+          if (hexRe.test(id0) || id0 === "argon" || id0 === "Argon4p0" || id0 === "carbon" || id0 === "neon") {
             var labelStr = "";
             var altHex = "";
             var isSynthetic = false;
@@ -907,7 +923,7 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
               var mode = explicitMode || (knownMeta ? knownMeta.mode : 0);
               if (mode === 0) {
                 if (low.indexOf("carbon") !== -1 || low.indexOf("argon") !== -1 || low.indexOf("ultra") !== -1) mode = 8;
-                else if (low.indexOf("pro") !== -1 || low.indexOf("thinking") !== -1) mode = 3;
+                else if (low.indexOf("neon") !== -1 || low.indexOf("pro") !== -1 || low.indexOf("thinking") !== -1) mode = 3;
                 else if (low.indexOf("lite") !== -1) mode = 6;
                 else if (low.indexOf("hydrogen") !== -1 || low.indexOf("flash") !== -1) mode = 1;
                 else if (!isSynthetic) mode = 1;
@@ -930,9 +946,10 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
           if (!Array.isArray(entry) || entry.length < 2) continue;
           var hdr = entry[0];
           var levels = entry[1];
-          if (!Array.isArray(hdr) || hdr.length <= 7 || !Array.isArray(levels)) continue;
+          if (!Array.isArray(hdr) || hdr.length < 6 || !Array.isArray(levels)) continue;
           policyModels.push({
-            enabled: Boolean(hdr[7]),
+            enabled: true,
+            is_default: Boolean(hdr.length > 7 ? hdr[7] : false),
             mode: hdr[1],
             slug: (hdr[3] !== undefined && hdr[3] !== null) ? hdr[3] : null,
             label: hdr[5] || hdr[4] || "",
@@ -974,6 +991,95 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
         headers: {}
       });
     } catch (_) {}
+  };
+
+  window.__dshProbeRawDiscovery = async function() {
+    try {
+      var w = window.WIZ_global_data || {};
+      var at = String(w.SNlM0e || "");
+      var bl = String(w.cfb2h || window.__dshSniffedBl || "");
+      var sid = String(w.FdrFJe || "");
+      if (!at || !bl || location.hostname !== "gemini.google.com") {
+        return JSON.stringify({ok: false, error: "WIZ_NOT_READY"});
+      }
+      var uInfo = detectAuthUserPrefix();
+      var srcPath = (uInfo.prefix || "") + "/app";
+      var reqNum = Math.floor(100000 + Math.random() * 800000);
+      var qs = "rpcids=otAQ7b&source-path=" + encodeURIComponent(srcPath)
+             + "&bl=" + encodeURIComponent(bl)
+             + (sid ? "&f.sid=" + encodeURIComponent(sid) : "")
+             + "&hl=en&_reqid=" + String(reqNum) + "&rt=c";
+      var url = "https://gemini.google.com" + uInfo.prefix + "/_/BardChatUi/data/batchexecute?" + qs;
+      var sniffed525 = (window.__dshSniffedHeaders && window.__dshSniffedHeaders["x-goog-ext-525001261-jspb"])
+                     || "[1,null,null,null,null,null,null,null,[4]]";
+      var hdrs = {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-Same-Domain": "1",
+        "x-goog-ext-525001261-jspb": sniffed525,
+        "x-goog-ext-73010989-jspb": "[0]"
+      };
+      if (uInfo.authUser) hdrs["X-Goog-AuthUser"] = uInfo.authUser;
+      var fReq = JSON.stringify([[["otAQ7b", "[]", null, "generic"]]]);
+      var body = "f.req=" + encodeURIComponent(fReq) + "&at=" + encodeURIComponent(at) + "&";
+      var resp = await origFetch.call(window, url, {
+        method: "POST",
+        credentials: "include",
+        headers: hdrs,
+        body: body,
+        __dshInternal: true
+      });
+      var raw = await resp.text();
+      var otInner = null;
+      var lines = raw.split("\\n");
+      for (var li = 0; li < lines.length; li++) {
+        var ln = lines[li].trim();
+        if (ln.indexOf("otAQ7b") === -1 || !ln.startsWith("[")) continue;
+        try {
+          var frames = JSON.parse(ln);
+          for (var fi = 0; fi < frames.length; fi++) {
+            var fr = frames[fi];
+            if (Array.isArray(fr) && fr[0] === "wrb.fr" && fr[1] === "otAQ7b" && fr[2]) {
+              otInner = (typeof fr[2] === "string") ? JSON.parse(fr[2]) : fr[2];
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+      var wizHints = {};
+      var skipKeys = {SNlM0e:1, oPEP7c:1, FdrFJe:1, Qzxixc:1, cfb2h:1};
+      for (var wk in w) {
+        if (skipKeys[wk]) continue;
+        try {
+          var sv = JSON.stringify(w[wk]);
+          if (!sv || sv.indexOf("@") !== -1) continue;
+          if (/(neon|carbon|hydrogen|argon|task|agent|deep.?think|policy|1640bd|797f3d|95a4c0|56fdd1|1bc6b5)/i.test(sv)) {
+            wizHints[wk] = sv.length > 2000 ? sv.slice(0, 2000) + "...(trunc)" : sv;
+          }
+        } catch (_) {}
+      }
+      var uiTexts = [];
+      try {
+        var els = document.querySelectorAll('button, [role="menuitem"], [role="option"], [data-test-id]');
+        for (var ei = 0; ei < els.length && uiTexts.length < 80; ei++) {
+          var txt = (els[ei].innerText || els[ei].getAttribute("aria-label") || "").trim();
+          if (txt && txt.length <= 80 && txt.indexOf("@") === -1) {
+            var tid = els[ei].getAttribute("data-test-id") || "";
+            uiTexts.push(tid ? (tid + ": " + txt) : txt);
+          }
+        }
+      } catch (_) {}
+      return JSON.stringify({
+        ok: resp.ok,
+        status: resp.status,
+        bl: bl,
+        sniffed_headers: window.__dshSniffedHeaders || {},
+        otAQ7b_inner: otInner,
+        wiz_hints: wizHints,
+        ui_texts: uiTexts
+      });
+    } catch (e) {
+      return JSON.stringify({ok: false, error: String(e || "unknown")});
+    }
   };
 
   window.__dshDeleteConversations = async function(rawCids) {
@@ -1055,15 +1161,16 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
     }
   };
 
-  window.__dshListRecentConversations = async function(limitCount) {
+  window.__dshListRecentConversations = async function(limitCount, pageToken) {
     try {
       var lim = (typeof limitCount === "number" && limitCount > 0) ? Math.min(100, Math.round(limitCount)) : 30;
+      var tok = (typeof pageToken === "string" && pageToken.length > 0) ? pageToken : null;
       var w = window.WIZ_global_data || {};
       var at = String(w.SNlM0e || "");
       var bl = String(w.cfb2h || window.__dshSniffedBl || "");
       var sid = String(w.FdrFJe || "");
       if (!at || !bl || location.hostname !== "gemini.google.com") {
-        return JSON.stringify({ok: false, error: "WIZ_NOT_READY", cids: []});
+        return JSON.stringify({ok: false, error: "WIZ_NOT_READY", cids: [], items: []});
       }
       var uInfo = detectAuthUserPrefix();
       var srcPath = (uInfo.prefix || "") + "/app";
@@ -1079,7 +1186,7 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
         "x-goog-ext-73010989-jspb": "[0]"
       };
       if (uInfo.authUser) hdrs["X-Goog-AuthUser"] = uInfo.authUser;
-      var fReq = JSON.stringify([[["MaZiqc", JSON.stringify([lim, null, [0, null, 1]]), null, "generic"]]]);
+      var fReq = JSON.stringify([[["MaZiqc", JSON.stringify([lim, tok, [0, null, 1]]), null, "generic"]]]);
       var body = "f.req=" + encodeURIComponent(fReq) + "&at=" + encodeURIComponent(at) + "&";
       var resp = await origFetch.call(window, url, {
         method: "POST",
@@ -1089,15 +1196,49 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
         __dshInternal: true
       });
       var raw = await resp.text();
+      var items = [];
+      var itemSeen = {};
+      var nextPageToken = "";
+      var lines = raw.split("\\n");
+      for (var li = 0; li < lines.length; li++) {
+        var ln = lines[li].trim();
+        if (ln.indexOf("MaZiqc") === -1 || !ln.startsWith("[")) continue;
+        try {
+          var frames = JSON.parse(ln);
+          if (!Array.isArray(frames)) continue;
+          for (var fi = 0; fi < frames.length; fi++) {
+            var fr = frames[fi];
+            if (Array.isArray(fr) && fr[0] === "wrb.fr" && fr[1] === "MaZiqc" && typeof fr[2] === "string") {
+              var inner = JSON.parse(fr[2]);
+              if (Array.isArray(inner)) {
+                if (typeof inner[1] === "string" && inner[1]) nextPageToken = inner[1];
+                var listNodes = [];
+                if (Array.isArray(inner[0])) listNodes = listNodes.concat(inner[0]);
+                if (Array.isArray(inner[2])) listNodes = listNodes.concat(inner[2]);
+                for (var ni = 0; ni < listNodes.length; ni++) {
+                  var entry = listNodes[ni];
+                  if (Array.isArray(entry) && typeof entry[0] === "string" && /^c_[0-9a-fA-F]{12,}$/.test(entry[0])) {
+                    if (!itemSeen[entry[0]]) {
+                      itemSeen[entry[0]] = true;
+                      var tStr = (entry.length > 1 && typeof entry[1] === "string") ? entry[1] : "";
+                      items.push({cid: entry[0], title: tStr, has_title: Boolean(tStr && tStr.trim().length > 0)});
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
       var matches = raw.match(/c_[0-9a-fA-F]{12,}/g) || [];
       var uniq = [];
       var seen = {};
       for (var i = 0; i < matches.length; i++) {
         if (!seen[matches[i]]) { seen[matches[i]] = true; uniq.push(matches[i]); }
       }
-      return JSON.stringify({ok: resp.ok, status: resp.status, cids: uniq});
+      return JSON.stringify({ok: resp.ok, status: resp.status, cids: uniq, items: items, next_page_token: nextPageToken});
     } catch (e) {
-      return JSON.stringify({ok: false, error: String(e || "unknown"), cids: []});
+      return JSON.stringify({ok: false, error: String(e || "unknown"), cids: [], items: []});
     }
   };
 
@@ -1163,14 +1304,14 @@ private let RESIDENT_BRIDGE_USER_SCRIPT = """
       }
       var body = "f.req=" + encodeURIComponent(cfg.fReq) + "&at=" + encodeURIComponent(at) + "&";
       var headersTimeoutMs = (typeof cfg.headersTimeoutMs === "number" && cfg.headersTimeoutMs >= 10000)
-        ? Math.min(540000, Math.round(cfg.headersTimeoutMs))
+        ? Math.min(900000, Math.round(cfg.headersTimeoutMs))
         : 90000;
       var firstWrbTimeoutMs = (typeof cfg.firstWrbTimeoutMs === "number" && cfg.firstWrbTimeoutMs >= 10000)
-        ? Math.min(540000, Math.round(cfg.firstWrbTimeoutMs))
+        ? Math.min(900000, Math.round(cfg.firstWrbTimeoutMs))
         : headersTimeoutMs;
       var idleTimeoutMs = (typeof cfg.idleTimeoutMs === "number" && cfg.idleTimeoutMs >= 10000)
-        ? Math.min(540000, Math.round(cfg.idleTimeoutMs))
-        : 240000;
+        ? Math.min(900000, Math.round(cfg.idleTimeoutMs))
+        : 360000;
       var headersTimer = setTimeout(function() {
         window.__dshAbortReasons[cfg.reqId] = "FETCH_TIMEOUT";
         try { ctrl.abort(); } catch (_) {}
@@ -1790,6 +1931,9 @@ final class WebSlot: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
         guard let reqId = dict["reqId"] as? String else { return }
         if ev == "http_status" {
             consecutiveFetchFailures = 0
+            if let nextIdle = reqIdleTimeoutSec[reqId] {
+                armReqWatchdog(reqId: reqId, timeoutSec: nextIdle)
+            }
         }
         if ev == "wrb_heartbeat" {
             if let nextIdle = reqIdleTimeoutSec[reqId] {
@@ -1814,9 +1958,7 @@ final class WebSlot: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
             } else if let code = dict["code"] as? String {
                 if code == "AUTH_REQUIRED" || code == "HTTP_401" || code == "HTTP_403" {
                     clearCachedAuth()
-                    if code == "AUTH_REQUIRED" || ((dict["reload"] as? Bool) ?? false) {
-                        needsReloadWhenIdle = true
-                    }
+                    needsReloadWhenIdle = true
                 } else if code == "FETCH_ERR" || code == "FETCH_TIMEOUT" || code == "FIRST_TOKEN_TIMEOUT" || code == "STREAM_IDLE_TIMEOUT" || code == "TRANSIENT_EMPTY_STREAM" {
                     consecutiveFetchFailures += 1
                     needsReloadWhenIdle = true
@@ -2578,21 +2720,27 @@ final class DSHWebKitBridge: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             }
         }
 
+        let oldMask = Darwin.umask(0o177)
         let bindRes = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
                 Darwin.bind(serverFd, saPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
+        _ = Darwin.umask(oldMask)
         guard bindRes == 0 else {
             fputs("[dsh-webkit-bridge] bind(\(socketPath)) failed\n", stderr)
             exit(1)
         }
-        Darwin.chmod(socketPath, mode_t(0o600))
+        if Darwin.chmod(socketPath, mode_t(0o600)) != 0 {
+            fputs("[dsh-webkit-bridge] chmod(0600, \(socketPath)) failed\n", stderr)
+            exit(1)
+        }
         Darwin.listen(serverFd, 32)
         fputs("[dsh-webkit-bridge \(BRIDGE_VERSION)] Listening on \(socketPath)\n", stderr)
 
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
+            let myUid = Darwin.geteuid()
             while true {
                 let listenFd = self.serverFd
                 if listenFd < 0 { break }
@@ -2601,6 +2749,12 @@ final class DSHWebKitBridge: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                     let err = errno
                     if err == EINTR { continue }
                     if self.serverFd < 0 || err == EBADF || err == EINVAL { break }
+                    continue
+                }
+                var peerUid: uid_t = 0
+                var peerGid: gid_t = 0
+                if Darwin.getpeereid(cfd, &peerUid, &peerGid) == 0 && peerUid != myUid {
+                    Darwin.close(cfd)
                     continue
                 }
                 setCloseOnExec(cfd)
@@ -2759,20 +2913,51 @@ final class DSHWebKitBridge: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 return
             }
 
+            if op == "probe_raw_discovery" {
+                guard let slot = self.slots.first(where: { $0.pageLoaded && $0.wizHydrated && !$0.cachedSNlM0e.isEmpty }) ?? self.slots.first(where: { $0.pageLoaded }) else {
+                    session.sendJSON(["ok": false, "error": "NO_READY_SLOT"])
+                    session.close()
+                    return
+                }
+                let jsBody = """
+                if (typeof window.__dshProbeRawDiscovery !== "function") {
+                  return JSON.stringify({ok: false, error: "HELPER_MISSING"});
+                }
+                return await window.__dshProbeRawDiscovery();
+                """
+                slot.webView.callAsyncJavaScript(jsBody, arguments: [:], in: nil, in: .page) { result in
+                    switch result {
+                    case .failure(let err):
+                        session.sendJSON(["ok": false, "error": err.localizedDescription])
+                    case .success(let res):
+                        if let s = res as? String,
+                           let d = s.data(using: .utf8),
+                           let obj = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
+                            session.sendJSON(obj)
+                        } else {
+                            session.sendJSON(["ok": false, "error": "INVALID_JS_RESULT"])
+                        }
+                    }
+                    session.close()
+                }
+                return
+            }
+
             if op == "list_conversations" {
                 let limit = (req["limit"] as? Int) ?? 30
+                let pageToken = (req["page_token"] as? String) ?? ""
                 guard let slot = self.slots.first(where: { $0.pageLoaded && $0.wizHydrated && !$0.cachedSNlM0e.isEmpty }) ?? self.slots.first(where: { $0.pageLoaded }) else {
-                    session.sendJSON(["ok": false, "error": "NO_READY_SLOT", "cids": []])
+                    session.sendJSON(["ok": false, "error": "NO_READY_SLOT", "cids": [], "items": []])
                     session.close()
                     return
                 }
                 let jsBody = """
                 if (typeof window.__dshListRecentConversations !== "function") {
-                  return JSON.stringify({ok: false, error: "HELPER_MISSING", cids: []});
+                  return JSON.stringify({ok: false, error: "HELPER_MISSING", cids: [], items: []});
                 }
-                return await window.__dshListRecentConversations(lim);
+                return await window.__dshListRecentConversations(lim, pageToken);
                 """
-                slot.webView.callAsyncJavaScript(jsBody, arguments: ["lim": limit], in: nil, in: .page) { result in
+                slot.webView.callAsyncJavaScript(jsBody, arguments: ["lim": limit, "pageToken": pageToken], in: nil, in: .page) { result in
                     switch result {
                     case .failure(let err):
                         session.sendJSON(["ok": false, "error": err.localizedDescription, "cids": []])
