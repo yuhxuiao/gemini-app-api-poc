@@ -37,6 +37,84 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+def ensure_bundle_info_plist(app_dir: str) -> str:
+    """Materialize the .app Info.plist that codesign needs.
+
+    `bin/` is gitignored, so a fresh clone has no bundle metadata and
+    `codesign --deep` fails with "bundle format unrecognized". Build output is
+    disposable, so write the plist deterministically on every build instead of
+    asking the user to create it by hand.
+    """
+    app_plist = os.path.join(app_dir, "Contents", "Info.plist")
+    os.makedirs(os.path.dirname(app_plist), exist_ok=True)
+    short_version = TARGET_VERSION.split("-", 1)[0]
+    plist_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>CFBundleDevelopmentRegion</key>
+\t<string>en</string>
+\t<key>CFBundleDisplayName</key>
+\t<string>DSHWebKitBridge</string>
+\t<key>CFBundleExecutable</key>
+\t<string>dsh-webkit-bridge</string>
+\t<key>CFBundleIdentifier</key>
+\t<string>com.dsh.gemini.webkitbridge</string>
+\t<key>CFBundleInfoDictionaryVersion</key>
+\t<string>6.0</string>
+\t<key>CFBundleName</key>
+\t<string>DSHWebKitBridge</string>
+\t<key>CFBundlePackageType</key>
+\t<string>APPL</string>
+\t<key>CFBundleShortVersionString</key>
+\t<string>{short_version}</string>
+\t<key>CFBundleVersion</key>
+\t<string>{short_version}</string>
+\t<key>LSMinimumSystemVersion</key>
+\t<string>15.0</string>
+\t<key>LSUIElement</key>
+\t<true/>
+\t<key>NSHighResolutionCapable</key>
+\t<true/>
+\t<key>NSPrincipalClass</key>
+\t<string>NSApplication</string>
+</dict>
+</plist>
+'''
+    with open(app_plist, "w", encoding="utf-8") as fp:
+        fp.write(plist_xml)
+    return app_plist
+
+
+def ensure_local_mcp_config() -> str:
+    """Provision the gitignored Layer-B MCP config a fresh clone lacks.
+
+    The example ships with `/path/to/gemini-app-api-poc` placeholders; rewrite
+    them to this checkout so the gateway's global embedded host and stage 3's
+    stdio probe both see a real config. Never overwrite an existing one.
+    """
+    local_cfg = os.path.join(PROJECT_DIR, "gemini_local_mcp_config.json")
+    if os.path.isfile(local_cfg):
+        return local_cfg
+    with open(os.path.join(PROJECT_DIR, "gemini_local_mcp_config.example.json"), "r", encoding="utf-8") as fp:
+        cfg = json.load(fp)
+    placeholder = "/path/to/gemini-app-api-poc"
+
+    def rewrite(value: Any) -> Any:
+        if isinstance(value, str) and value.startswith(placeholder + "/"):
+            return os.path.join(PROJECT_DIR, value[len(placeholder) + 1 :])
+        return value
+
+    for spec in (cfg.get("mcpServers") or {}).values():
+        if isinstance(spec, dict):
+            spec["command"] = rewrite(spec.get("command", ""))
+            spec["args"] = [rewrite(arg) for arg in (spec.get("args") or [])]
+    with open(local_cfg, "w", encoding="utf-8") as fp:
+        json.dump(cfg, fp, ensure_ascii=False, indent=2)
+        fp.write("\n")
+    return local_cfg
+
+
 def make_call_envelope(nonce: str, tool_name: str, tool_input: dict) -> str:
     tag = "dsh_" + "call_" + nonce
     payload = json.dumps({"name": tool_name, "input": tool_input}, ensure_ascii=False)
@@ -490,6 +568,7 @@ def stage_preflight_env() -> dict:
 
     os.makedirs(BIN_DIR, exist_ok=True)
     os.makedirs(RUNTIME_DIR, exist_ok=True)
+    ensure_local_mcp_config()
     return {"files_audited_zero_acp": audited}
 
 
@@ -539,6 +618,7 @@ def stage_build_native() -> dict:
         )
         shutil.copy2(swift_out, app_bin)
         os.chmod(app_bin, 0o755)
+        ensure_bundle_info_plist(app_dir)
         subprocess.run(
             ["/usr/bin/codesign", "--force", "--deep", "--sign", "-", app_dir],
             check=True,
